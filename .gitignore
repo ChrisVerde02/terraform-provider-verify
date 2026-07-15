@@ -1,0 +1,18 @@
+# Provider binary
+terraform-provider-verify
+
+# Terraform state and lock files
+*.tfstate
+*.tfstate.*
+*.tfstate.old
+*.tfstate.backup*
+.terraform/
+.terraform.lock.hcl
+
+# Private key and certificate on disk — never commit these
+examples/key.pem
+examples/cert.pem
+
+# Go build cache
+*.exe
+*.test

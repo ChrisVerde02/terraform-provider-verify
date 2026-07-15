@@ -1,0 +1,508 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>terraform-provider-verify — Complete Code Walkthrough</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.6;color:#1f2328;background:#fff}
+.page{max-width:760px;margin:0 auto;padding:32px 24px 56px}
+h1{font-size:22px;font-weight:700;margin-bottom:4px}
+.subtitle{color:#57606a;font-size:13px;margin-bottom:36px}
+h2{font-size:17px;font-weight:700;margin:40px 0 12px;padding-bottom:7px;border-bottom:2px solid #e5e7eb;color:#1f2328}
+h3{font-size:14px;font-weight:700;margin:20px 0 6px;color:#1f2328}
+h4{font-size:13px;font-weight:600;margin:14px 0 4px;color:#57606a;text-transform:uppercase;letter-spacing:.04em}
+p{margin-bottom:10px}
+ul{margin:6px 0 10px 20px}
+li{margin-bottom:4px}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:12px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:3px;padding:1px 5px}
+pre{background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px;padding:14px 16px;font-size:12px;font-family:"SFMono-Regular",Consolas,monospace;overflow-x:auto;margin:8px 0 14px;line-height:1.55;white-space:pre}
+.badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px;vertical-align:middle}
+.go{background:#dbeafe;color:#1e40af}
+.tf{background:#d1fae5;color:#065f46}
+.hcl{background:#ede9fe;color:#5b21b6}
+.note{background:#f7f8fa;border-left:3px solid #3b82d4;padding:10px 14px;margin:10px 0 16px;border-radius:0 4px 4px 0;font-size:13px}
+.warn{background:#fffbeb;border-left:3px solid #f59e0b;padding:10px 14px;margin:10px 0 16px;border-radius:0 4px 4px 0;font-size:13px}
+.ok{background:#f0fdf4;border-left:3px solid #10b981;padding:10px 14px;margin:10px 0 16px;border-radius:0 4px 4px 0;font-size:13px}
+.file{border:1px solid #e5e7eb;border-radius:8px;margin-bottom:28px;overflow:hidden}
+.file-hdr{background:#f7f8fa;padding:9px 16px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;gap:10px}
+.file-path{font-family:"SFMono-Regular",Consolas,monospace;font-size:12.5px;font-weight:700;color:#3b82d4}
+.file-body{padding:16px}
+table{width:100%;border-collapse:collapse;margin:10px 0 16px;font-size:13px}
+th{background:#f7f8fa;text-align:left;padding:7px 10px;border:1px solid #e5e7eb;font-weight:600}
+td{padding:7px 10px;border:1px solid #e5e7eb;vertical-align:top}
+tr:nth-child(even) td{background:#fafafa}
+.arrow{color:#57606a;font-size:15px;padding:0 6px}
+.flow{background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px;padding:14px 16px;margin:12px 0 16px}
+.flow-row{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+.flow-row:last-child{margin-bottom:0}
+.box{border:1px solid #e5e7eb;border-radius:4px;padding:4px 12px;font-size:12px;font-weight:500;background:#fff;white-space:nowrap}
+.box.b{border-color:#93c5fd;background:#eff6ff}
+.box.g{border-color:#6ee7b7;background:#ecfdf5}
+.box.r{border-color:#fca5a5;background:#fef2f2}
+.box.p{border-color:#c4b5fd;background:#f5f3ff}
+.toc{background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px;padding:16px 20px;margin-bottom:32px}
+.toc-title{font-weight:700;font-size:13px;margin-bottom:8px;color:#57606a;text-transform:uppercase;letter-spacing:.04em}
+.toc a{color:#3b82d4;text-decoration:none;font-size:13px}
+.toc a:hover{text-decoration:underline}
+.toc li{margin-bottom:3px}
+.footer{margin-top:48px;padding-top:16px;border-top:1px solid #e5e7eb;text-align:center;font-size:12px;color:#57606a}
+.num{display:inline-block;background:#e5e7eb;color:#57606a;border-radius:50%;width:20px;height:20px;text-align:center;line-height:20px;font-size:11px;font-weight:700;margin-right:6px}
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>terraform-provider-verify</h1>
+<p class="subtitle">Every file explained — what it does, how it works, and how it connects to everything else.</p>
+
+<div class="toc">
+  <div class="toc-title">Contents</div>
+  <ul>
+    <li><a href="#arch">1. Architecture overview</a></li>
+    <li><a href="#main">2. main.go — entry point</a></li>
+    <li><a href="#provider">3. provider.go — the registry</a></li>
+    <li><a href="#cert-crypto">4. crypto/certificate.go — RSA key + cert generation</a></li>
+    <li><a href="#cert-res">5. resources/certificate_resource.go — verify_certificate</a></li>
+    <li><a href="#jwt-crypto">6. crypto/jwt.go — JWT signing</a></li>
+    <li><a href="#jwt-res">7. resources/jwt_resource.go — verify_jwt</a></li>
+    <li><a href="#exchange-client">8. client/token_exchange.go — HTTP token exchange</a></li>
+    <li><a href="#exchange-res">9. resources/token_exchange_resource.go — verify_token_exchange</a></li>
+    <li><a href="#intro-client">10. client/introspection.go — HTTP introspection</a></li>
+    <li><a href="#intro-ds">11. datasources/token_introspection_data_source.go — data.verify_token_introspection</a></li>
+    <li><a href="#cert-tf">12. examples/cert/main.tf — one-time cert root</a></li>
+    <li><a href="#main-tf">13. examples/main.tf — main Terraform config</a></li>
+    <li><a href="#concepts">14. Key concepts explained</a></li>
+  </ul>
+</div>
+
+
+<h2 id="arch">1. Architecture Overview</h2>
+
+<p>The codebase has three distinct layers. Each layer has one job and does not reach into the others' responsibilities.</p>
+
+<table>
+  <tr><th>Layer</th><th>Packages</th><th>Job</th></tr>
+  <tr><td><strong>Pure logic</strong></td><td><code>internal/crypto/</code></td><td>Go functions that generate certs and JWTs. No Terraform code. Independently testable.</td></tr>
+  <tr><td><strong>HTTP clients</strong></td><td><code>internal/client/</code></td><td>Go functions that talk to IBM Verify over HTTP. No Terraform code. Independently testable.</td></tr>
+  <tr><td><strong>Terraform glue</strong></td><td><code>internal/resources/</code><br /><code>internal/datasources/</code><br /><code>internal/provider/</code></td><td>Wraps the layers above. Defines schema, reads HCL config, calls logic/client functions, saves state.</td></tr>
+</table>
+
+<div class="flow">
+  <div class="flow-row"><div class="box g">HCL config (main.tf)</div><span class="arrow">→</span><div class="box p">Terraform glue (resources/datasources)</div><span class="arrow">→</span><div class="box b">Pure logic (crypto)</div></div>
+  <div class="flow-row"><div class="box g">HCL config (main.tf)</div><span class="arrow">→</span><div class="box p">Terraform glue (resources/datasources)</div><span class="arrow">→</span><div class="box b">HTTP client (client)</div><span class="arrow">→</span><div class="box r">IBM Verify API</div></div>
+</div>
+
+
+<h2 id="main">2. main.go — Entry Point</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">main.go</span><span class="badge go">Go</span></div>
+  <div class="file-body">
+    <pre>func main() {
+    providerserver.Serve(
+        context.Background(),
+        provider.New,   // ← factory: returns a new VerifyProvider
+        providerserver.ServeOpts{
+            Address: "registry.terraform.io/christian-verderame/verify",
+        },
+    )
+}</pre>
+    <p>When Terraform runs <code>terraform apply</code> it looks up the provider binary on disk (via the dev_override in <code>~/.terraformrc</code>) and launches it as a child process. The binary starts a <strong>gRPC server</strong> inside <code>providerserver.Serve()</code>. Terraform then connects to that server and sends RPCs like <em>"plan this resource"</em> or <em>"create this resource"</em>.</p>
+    <div class="note"><strong>Address matters:</strong> The address <code>christian-verderame/verify</code> must exactly match the <code>source</code> field in <code>required_providers</code> in every <code>.tf</code> file that uses this provider.</div>
+    <p><code>provider.New</code> is a factory — a function that returns a new provider instance. The framework calls it once per Terraform operation.</p>
+  </div>
+</div>
+
+
+<h2 id="provider">3. internal/provider/provider.go — The Registry</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">internal/provider/provider.go</span><span class="badge go">Go</span></div>
+  <div class="file-body">
+    <p>This is the <strong>directory listing</strong> of everything the provider offers. It implements the <code>provider.Provider</code> interface — five methods Terraform calls at startup:</p>
+    <table>
+      <tr><th>Method</th><th>What it returns / does</th></tr>
+      <tr><td><code>Metadata()</code></td><td>Sets <code>TypeName = "verify"</code> — this prefix is added to all resource names, making <code>verify_jwt</code>, <code>verify_certificate</code>, etc.</td></tr>
+      <tr><td><code>Schema()</code></td><td>Declares provider-level config (currently empty — no global tenant_url yet)</td></tr>
+      <tr><td><code>Configure()</code></td><td>Runs after Terraform reads provider config. Currently empty — would build a shared HTTP client here in future and pass it to all resources via <code>resp.ResourceData</code></td></tr>
+      <tr><td><code>Resources()</code></td><td>Returns <code>[]func() resource.Resource</code> — a slice of factory functions, one per resource type</td></tr>
+      <tr><td><code>DataSources()</code></td><td>Returns <code>[]func() datasource.DataSource</code> — same pattern for data sources</td></tr>
+    </table>
+    <pre>func (p *VerifyProvider) Resources(...) []func() resource.Resource {
+    return []func() resource.Resource{
+        resources.NewCertificateResource,   // → "verify_certificate"
+        resources.NewJWTResource,           // → "verify_jwt"
+        resources.NewTokenExchangeResource, // → "verify_token_exchange"
+    }
+}
+func (p *VerifyProvider) DataSources(...) []func() datasource.DataSource {
+    return []func() datasource.DataSource{
+        datasources.NewTokenIntrospectionDataSource, // → "data.verify_token_introspection"
+    }
+}</pre>
+    <div class="note"><strong>Why factory functions?</strong> Terraform may create many instances of a resource type in one run. Using a factory (<code>func() resource.Resource</code>) means each instance gets a fresh zero-value struct — no shared state between instances.</div>
+  </div>
+</div>
+
+
+<h2 id="cert-crypto">4. internal/crypto/certificate.go — RSA Key + Cert Generation</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">internal/crypto/certificate.go</span><span class="badge go">Go — pure logic, no Terraform</span></div>
+  <div class="file-body">
+    <p>A single exported function: <code>GenerateSelfSignedCertificate(request)</code>. Takes inputs, returns <code>(CertificatePEM, PrivateKeyPEM)</code> as strings.</p>
+    <h4>Step by step</h4>
+    <pre>// 1. Validate inputs (common_name, org, country, validity, key_size)
+if request.KeySize != 2048 &amp;&amp; request.KeySize != 3072 &amp;&amp; request.KeySize != 4096 { error }
+
+// 2. Generate a random RSA private key — DIFFERENT EVERY TIME
+privateKey, _ := rsa.GenerateKey(rand.Reader, request.KeySize)
+
+// 3. Generate a random 128-bit serial number for the certificate
+serialNumber, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+
+// 4. Build the certificate template
+template := x509.Certificate{
+    SerialNumber: serialNumber,
+    Subject:      pkix.Name{ CommonName: "DemoTokenSigner", ... },
+    NotBefore:    now - 5min,   // small backdate to avoid clock-skew rejections
+    NotAfter:     now + 365days,
+    KeyUsage:     DigitalSignature | KeyEncipherment,
+    ExtKeyUsage:  ClientAuth,   // this cert is used to authenticate a client
+    IsCA:         false,
+}
+
+// 5. Self-sign: the cert is signed by itself (same template as parent and child)
+certDER, _ := x509.CreateCertificate(rand.Reader, &amp;template, &amp;template, &amp;privateKey.PublicKey, privateKey)
+
+// 6. Encode both to PEM strings and return
+return &amp;CertificateResult{ CertificatePEM: "-----BEGIN CERTIFICATE-----...", PrivateKeyPEM: "-----BEGIN RSA PRIVATE KEY-----..." }</pre>
+    <div class="warn"><strong>Generates a new key pair every call.</strong> <code>rsa.GenerateKey(rand.Reader, …)</code> uses the OS cryptographic random number generator — it is mathematically impossible to produce the same key twice. This is why the cert lives in its own separate Terraform root that is never destroyed.</div>
+  </div>
+</div>
+
+
+<h2 id="cert-res">5. internal/resources/certificate_resource.go — verify_certificate</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">internal/resources/certificate_resource.go</span><span class="badge go">Go — Terraform resource</span></div>
+  <div class="file-body">
+    <p>The Terraform wrapper around <code>GenerateSelfSignedCertificate()</code>. Implements the <code>resource.Resource</code> interface.</p>
+
+    <h3>The model struct</h3>
+    <pre>type CertificateResourceModel struct {
+    CommonName   types.String `tfsdk:"common_name"`    // Required input
+    Organization types.String `tfsdk:"organization"`   // Required input
+    Country      types.String `tfsdk:"country"`         // Required input
+    ValidityDays types.Int64  `tfsdk:"validity_days"`   // Required input
+    KeySize      types.Int64  `tfsdk:"key_size"`         // Required input
+    CertificatePEM types.String `tfsdk:"certificate_pem"` // Computed output
+    PrivateKeyPEM  types.String `tfsdk:"private_key_pem"` // Computed output (sensitive)
+}</pre>
+    <p>The <code>tfsdk:"…"</code> struct tag is how the framework maps an HCL attribute name to a Go field. <code>types.String</code> (not plain <code>string</code>) is used because Terraform values can be null, unknown, or a real value — the framework's type wraps that.</p>
+
+    <h3>Schema — what Terraform knows about the resource</h3>
+    <table>
+      <tr><th>Attribute</th><th>Required / Computed</th><th>Plan modifier</th></tr>
+      <tr><td><code>common_name</code></td><td>Required (user provides)</td><td><code>RequiresReplace()</code></td></tr>
+      <tr><td><code>organization</code></td><td>Required</td><td><code>RequiresReplace()</code></td></tr>
+      <tr><td><code>country</code></td><td>Required</td><td><code>RequiresReplace()</code></td></tr>
+      <tr><td><code>validity_days</code></td><td>Required</td><td><code>RequiresReplace()</code></td></tr>
+      <tr><td><code>key_size</code></td><td>Required</td><td><code>RequiresReplace()</code></td></tr>
+      <tr><td><code>certificate_pem</code></td><td>Computed (provider fills in)</td><td>none</td></tr>
+      <tr><td><code>private_key_pem</code></td><td>Computed + Sensitive</td><td>none</td></tr>
+    </table>
+    <div class="note"><strong>RequiresReplace():</strong> Tells Terraform "if the user changes this field, destroy the old resource and create a new one." Because a certificate is cryptographic material — you can't edit it in place — every input has this modifier.</div>
+
+    <h3>Create — the only method that does real work</h3>
+    <pre>func (r *CertificateResource) Create(ctx, req, resp) {
+    var plan CertificateResourceModel
+    req.Plan.Get(ctx, &amp;plan)             // 1. read HCL config into the struct
+
+    result, _ := crypto.GenerateSelfSignedCertificate(...)  // 2. generate cert
+
+    plan.CertificatePEM = types.StringValue(result.CertificatePEM)  // 3. set outputs
+    plan.PrivateKeyPEM  = types.StringValue(result.PrivateKeyPEM)
+
+    resp.State.Set(ctx, &amp;plan)           // 4. save everything to Terraform state
+}</pre>
+    <p><strong>Read, Update, Delete</strong> are all empty — there is nothing to read back from an external system (the cert was generated locally), nothing to update (RequiresReplace handles changes), and nothing to delete (it's just state).</p>
+  </div>
+</div>
+
+
+<h2 id="jwt-crypto">6. internal/crypto/jwt.go — JWT Signing</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">internal/crypto/jwt.go</span><span class="badge go">Go — pure logic, no Terraform</span></div>
+  <div class="file-body">
+    <p>A single exported function: <code>GenerateSignedJWT(request)</code>. Uses the <code>github.com/golang-jwt/jwt/v5</code> library.</p>
+    <pre>// 1. Parse the RSA private key PEM string into a Go *rsa.PrivateKey
+privateKey, _ := jwt.ParseRSAPrivateKeyFromPEM([]byte(request.PrivateKeyPEM))
+
+// 2. Build the standard JWT claims
+claims := jwt.MapClaims{
+    "iss": "https://demo.ibm.com",       // who issued the token
+    "sub": "bretton",                    // who the token is about
+    "iat": now.Unix(),                   // issued at (Unix timestamp)
+    "exp": now.Add(15min).Unix(),        // expires at
+    "jti": "some-uuid",                  // unique ID — prevents replay attacks
+}
+
+// 3. Create token with RS256 algorithm
+token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+token.Header["kid"] = "demotokensigner"  // key ID — IBM Verify uses this to look up the cert
+
+// 4. Sign with the private key → produces the three-part JWT string
+signedToken, _ := token.SignedString(privateKey)
+// Result: "eyJhbGci....eyJpc3MiO....FLPzuUKRA9..."
+//          ↑ header    ↑ claims      ↑ signature</pre>
+
+    <h4>Why kid matters</h4>
+    <p>IBM Verify stores your uploaded certificate under a label (e.g. <code>demotokensigner</code>). When it receives a JWT it reads the <code>kid</code> header, looks up the certificate by that label, and uses the certificate's public key to verify the signature. If <code>kid</code> doesn't match any stored label → rejected.</p>
+  </div>
+</div>
+
+
+<h2 id="jwt-res">7. internal/resources/jwt_resource.go — verify_jwt</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">internal/resources/jwt_resource.go</span><span class="badge go">Go — Terraform resource</span></div>
+  <div class="file-body">
+    <p>The Terraform wrapper around <code>GenerateSignedJWT()</code>. Follows the exact same pattern as <code>certificate_resource.go</code>.</p>
+    <table>
+      <tr><th>Attribute</th><th>Type</th><th>Description</th></tr>
+      <tr><td><code>issuer</code></td><td>Required</td><td>Goes into <code>iss</code> claim</td></tr>
+      <tr><td><code>subject</code></td><td>Required</td><td>Goes into <code>sub</code> claim — the username IBM Verify resolves</td></tr>
+      <tr><td><code>key_id</code></td><td>Required</td><td>Goes into <code>kid</code> JWT header — must match the cert label in IBM Verify</td></tr>
+      <tr><td><code>jwt_id</code></td><td>Required</td><td>Goes into <code>jti</code> claim — a UUID for uniqueness</td></tr>
+      <tr><td><code>private_key_pem</code></td><td>Required + Sensitive</td><td>The RSA private key used to sign</td></tr>
+      <tr><td><code>expires_in_seconds</code></td><td>Required</td><td>How long the JWT is valid (900 = 15 min)</td></tr>
+      <tr><td><code>token</code></td><td>Computed + Sensitive</td><td>The signed JWT string</td></tr>
+      <tr><td><code>issued_at</code></td><td>Computed</td><td>Unix timestamp of signing time</td></tr>
+      <tr><td><code>expires_at</code></td><td>Computed</td><td>Unix timestamp of expiry</td></tr>
+    </table>
+    <div class="warn"><strong>Known limitation:</strong> All inputs have <code>RequiresReplace()</code>. Since <code>key.pem</code> and other inputs don't change between runs, Terraform keeps the old (expired) JWT in state. You must <code>terraform destroy -target=verify_jwt.custom</code> to force a fresh one. This is why every apply should be preceded by destroying the JWT and token exchange resources.</div>
+  </div>
+</div>
+
+
+<h2 id="exchange-client">8. internal/client/token_exchange.go — HTTP Token Exchange</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">internal/client/token_exchange.go</span><span class="badge go">Go — HTTP client, no Terraform</span></div>
+  <div class="file-body">
+    <p>A single exported function: <code>ExchangeToken(ctx, request)</code>. Sends an OAuth 2.0 Token Exchange (RFC 8693) request to IBM Verify.</p>
+    <pre>// POST https://&lt;tenant&gt;/oauth2/token
+// Content-Type: application/x-www-form-urlencoded
+
+form := url.Values{}
+form.Set("grant_type",          "urn:ietf:params:oauth:grant-type:token-exchange")
+form.Set("client_id",           "9ada0c66-...")
+form.Set("client_secret",       "TvFt1rBA9...")
+form.Set("subject_token",       "&lt;the signed JWT&gt;")
+form.Set("subject_token_type",  "urn:demo:token-type:user-jwt")</pre>
+
+    <h4>Response handling</h4>
+    <pre>// Success (HTTP 200):
+{ "access_token": "tNAJt3...", "expires_in": 3600, "grant_id": "67c35bc8...",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "scope": "", "token_type": "bearer" }
+
+// Failure (HTTP 4xx):
+{ "error": "invalid_client", "error_description": "CSIAQ0155E..." }
+// → returned as a Go error with the HTTP status code and both fields</pre>
+
+    <h4>Error guard at line 134</h4>
+    <pre>if tokenResponse.AccessToken == "" {
+    return nil, errors.New("IBM Verify response did not contain an access_token")
+}</pre>
+    <p>Even if the HTTP status is 200, if <code>access_token</code> is missing the function returns an error — defensive programming against unexpected IBM Verify response formats.</p>
+  </div>
+</div>
+
+
+<h2 id="exchange-res">9. internal/resources/token_exchange_resource.go — verify_token_exchange</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">internal/resources/token_exchange_resource.go</span><span class="badge go">Go — Terraform resource</span></div>
+  <div class="file-body">
+    <p>The Terraform wrapper around <code>ExchangeToken()</code>.</p>
+    <table>
+      <tr><th>Attribute</th><th>Type</th><th>Notes</th></tr>
+      <tr><td><code>tenant_url</code></td><td>Required</td><td>e.g. <code>https://ChrisVerde02.verify.ibm.com</code></td></tr>
+      <tr><td><code>client_id</code></td><td>Required</td><td>UUID of the STS API client</td></tr>
+      <tr><td><code>client_secret</code></td><td>Required + Sensitive</td><td>Secret for the STS client</td></tr>
+      <tr><td><code>subject_token</code></td><td>Required + Sensitive</td><td>The signed JWT to exchange</td></tr>
+      <tr><td><code>subject_token_type</code></td><td>Optional + Computed</td><td>Defaults to <code>urn:demo:token-type:user-jwt</code> for this tenant</td></tr>
+      <tr><td><code>access_token</code></td><td>Computed + Sensitive</td><td>The IBM Verify access token</td></tr>
+      <tr><td><code>expires_in</code></td><td>Computed</td><td>Token lifetime in seconds (3600)</td></tr>
+      <tr><td><code>grant_id</code></td><td>Computed</td><td>IBM Verify grant identifier</td></tr>
+      <tr><td><code>issued_token_type</code></td><td>Computed</td><td><code>urn:ietf:params:oauth:token-type:access_token</code></td></tr>
+      <tr><td><code>scope</code></td><td>Computed</td><td>Granted scopes (empty if none configured)</td></tr>
+      <tr><td><code>token_type</code></td><td>Computed</td><td><code>bearer</code></td></tr>
+    </table>
+    <div class="note"><strong>subject_token_type default:</strong> If not set in HCL, it defaults to <code>urn:demo:token-type:user-jwt</code> in the Create method. This is the custom URN your IBM Verify tenant is configured to accept. Other tenants may use <code>urn:ietf:params:oauth:token-type:jwt</code> (the RFC 8693 standard).</div>
+  </div>
+</div>
+
+
+<h2 id="intro-client">10. internal/client/introspection.go — HTTP Introspection</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">internal/client/introspection.go</span><span class="badge go">Go — HTTP client, no Terraform</span></div>
+  <div class="file-body">
+    <p>A single exported function: <code>IntrospectToken(ctx, request)</code>. Sends an OAuth 2.0 Token Introspection (RFC 7662) request.</p>
+    <pre>// POST https://&lt;tenant&gt;/oauth2/introspect
+form.Set("client_id",       "9ada0c66-...")
+form.Set("client_secret",   "TvFt1rBA9...")
+form.Set("token",           "&lt;access_token&gt;")
+form.Set("token_type_hint", "access_token") // optional hint, speeds up lookup</pre>
+
+    <h4>Response struct</h4>
+    <pre>type IntrospectionResponse struct {
+    Active            bool   // is the token currently valid?
+    ClientID          string // which client issued the token
+    Username          string // Cloud Directory username e.g. "Bretton"
+    PreferredUsername string // OIDC preferred_username claim
+    Name              string // full display name e.g. "Jessica"
+    GivenName         string // first name
+    Subject           string // IBM Verify internal user ID e.g. "6430083CO1"
+    Scope             string // granted scopes
+    TokenType         string // "bearer"
+    Issuer            string // token issuer
+    IssuedAt          int64  // Unix timestamp
+    ExpiresAt         int64  // Unix timestamp
+}</pre>
+    <p>If IBM Verify doesn't include a field (like <code>username</code>), Go's <code>json.Unmarshal</code> leaves it as the zero value (<code>""</code> for strings) — no error, just empty.</p>
+  </div>
+</div>
+
+
+<h2 id="intro-ds">11. internal/datasources/token_introspection_data_source.go — data.verify_token_introspection</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">internal/datasources/token_introspection_data_source.go</span><span class="badge go">Go — Terraform data source</span></div>
+  <div class="file-body">
+    <p>The Terraform wrapper around <code>IntrospectToken()</code>. Implements <code>datasource.DataSource</code> — a <strong>different interface</strong> from <code>resource.Resource</code>.</p>
+
+    <h4>Data source vs resource — why it matters here</h4>
+    <table>
+      <tr><th></th><th>Resource</th><th>Data Source</th></tr>
+      <tr><td>Interface</td><td><code>resource.Resource</code></td><td><code>datasource.DataSource</code></td></tr>
+      <tr><td>Methods</td><td>Create, Read, Update, Delete</td><td>Read only</td></tr>
+      <tr><td>When Read runs</td><td>Only when Terraform thinks state is stale</td><td><strong>Every single plan and apply</strong></td></tr>
+      <tr><td>State</td><td>Persisted across runs</td><td>Recomputed every run</td></tr>
+    </table>
+    <div class="ok"><strong>Why introspection must be a data source:</strong> A token expires in 60 minutes. If it were a resource, Terraform would call Create once, store <code>active=true</code>, and show that for hours. As a data source, <code>Read()</code> is called on every apply — the result always reflects right now.</div>
+
+    <h4>Read method</h4>
+    <pre>func (d *TokenIntrospectionDataSource) Read(ctx, req, resp) {
+    var config TokenIntrospectionDataSourceModel
+    req.Config.Get(ctx, &amp;config)        // 1. read inputs from HCL config
+
+    result, _ := client.IntrospectToken(ctx, ...)  // 2. call IBM Verify
+
+    config.Active    = types.BoolValue(result.Active)   // 3. map response
+    config.Subject   = types.StringValue(result.Subject)
+    // ... all fields
+
+    resp.State.Set(ctx, &amp;config)        // 4. store result in data source state
+}</pre>
+    <p>Note: data sources use <code>req.Config</code> (not <code>req.Plan</code>) to read inputs — because data sources have no plan, only current config.</p>
+  </div>
+</div>
+
+
+<h2 id="cert-tf">12. examples/cert/main.tf — One-Time Certificate Root</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">examples/cert/main.tf</span><span class="badge hcl">HCL — Terraform config</span></div>
+  <div class="file-body">
+    <p>A completely separate Terraform root with its own <code>terraform.tfstate</code>. Run once, never touched again.</p>
+    <pre>resource "verify_certificate" "this" {
+  common_name   = "DemoTokenSigner"
+  validity_days = 365
+  key_size      = 4096
+  ...
+}
+# Writes cert.pem to examples/ for uploading to IBM Verify
+resource "local_file" "certificate" {
+  content  = verify_certificate.this.certificate_pem
+  filename = "${path.module}/../cert.pem"
+}
+# Writes key.pem to examples/ for use by verify_jwt
+resource "local_sensitive_file" "private_key" {
+  content  = verify_certificate.this.private_key_pem
+  filename = "${path.module}/../key.pem"
+}</pre>
+    <div class="ok"><strong>Why a separate root?</strong> Terraform state is per-root. By putting the cert here, a <code>terraform destroy</code> in <code>examples/</code> never touches this root — the key pair survives and IBM Verify's trust relationship remains intact.</div>
+  </div>
+</div>
+
+
+<h2 id="main-tf">13. examples/main.tf — Main Terraform Config</h2>
+<div class="file">
+  <div class="file-hdr"><span class="file-path">examples/main.tf</span><span class="badge hcl">HCL — Terraform config</span></div>
+  <div class="file-body">
+    <p>The main config run on every <code>terraform apply</code>. Five logical sections:</p>
+
+    <h4>Section 1 — Read stable private key from disk</h4>
+    <pre>locals {
+  private_key_pem = file("${path.module}/key.pem")
+  # Reads the key written by examples/cert/ — same key every time
+}</pre>
+
+    <h4>Section 2 — Sign a fresh JWT</h4>
+    <pre>resource "random_uuid" "jwt_id" {}  # new UUID each destroy/apply cycle
+
+resource "verify_jwt" "custom" {
+  issuer             = "https://demo.ibm.com"
+  subject            = "bretton"         # username in IBM Verify
+  key_id             = "demotokensigner" # cert label in IBM Verify
+  jwt_id             = random_uuid.jwt_id.result
+  private_key_pem    = local.private_key_pem
+  expires_in_seconds = 900               # 15 minutes
+}</pre>
+
+    <h4>Section 3 — Exchange JWT for access token</h4>
+    <pre>resource "verify_token_exchange" "example" {
+  tenant_url         = var.verify_tenant_url
+  client_id          = var.sts_client_id
+  client_secret      = var.sts_client_secret
+  subject_token      = verify_jwt.custom.token    # output of the JWT resource
+  subject_token_type = "urn:demo:token-type:user-jwt"
+}</pre>
+
+    <h4>Section 4 — Introspect the access token</h4>
+    <pre>data "verify_token_introspection" "example" {
+  tenant_url    = var.verify_tenant_url
+  client_id     = var.sts_client_id
+  client_secret = var.sts_client_secret
+  token         = verify_token_exchange.example.access_token  # chained from above
+}</pre>
+
+    <h4>Section 5 — Outputs</h4>
+    <p>All <code>output</code> blocks expose values after apply. Sensitive ones (access_token, jwt) are hidden by default — use <code>terraform output -raw access_token</code> to reveal.</p>
+
+    <div class="note"><strong>Dependency chain:</strong> Terraform automatically infers the creation order from references. <code>verify_jwt</code> waits for <code>random_uuid</code>, <code>verify_token_exchange</code> waits for <code>verify_jwt</code>, and <code>data.verify_token_introspection</code> waits for <code>verify_token_exchange</code>. You never declare this order explicitly.</div>
+  </div>
+</div>
+
+
+<h2 id="concepts">14. Key Concepts Explained</h2>
+
+<h3>go.mod — dependency management</h3>
+<p>Declares two direct dependencies:</p>
+<ul>
+  <li><code>github.com/golang-jwt/jwt/v5</code> — JWT creation and signing</li>
+  <li><code>github.com/hashicorp/terraform-plugin-framework</code> — the Terraform provider SDK</li>
+</ul>
+<p>Everything else (gRPC, protobuf, logging) is an indirect dependency pulled in automatically.</p>
+
+<h3>types.String vs string</h3>
+<p>All model struct fields use <code>types.String</code>, not plain <code>string</code>. This is because Terraform values have three states: <strong>known</strong>, <strong>null</strong>, and <strong>unknown</strong>. Plain <code>string</code> can't represent null or unknown. The framework types handle all three.</p>
+
+<h3>Sensitive: true</h3>
+<p>Any attribute with <code>Sensitive: true</code> in the schema is redacted in Terraform plan/apply output and in the state file. The value is still stored — it just won't be printed. This is used for <code>private_key_pem</code>, <code>client_secret</code>, <code>access_token</code>, and <code>token</code>.</p>
+
+<h3>var _ resource.Resource = &amp;CertificateResource{}</h3>
+<p>This line appears at the top of every resource file. It's a compile-time check — if <code>CertificateResource</code> doesn't implement all methods of the <code>resource.Resource</code> interface, the build fails immediately. It produces no runtime code.</p>
+
+<h3>go build -o terraform-provider-verify .</h3>
+<p>Must be run from the project root after every Go code change. Produces the binary that Terraform loads via the dev_override in <code>~/.terraformrc</code>. Without this step, Terraform runs the old binary and ignores your changes.</p>
+
+<div class="footer">Made with IBM Bob</div>
+</div>
+</body>
+</html>

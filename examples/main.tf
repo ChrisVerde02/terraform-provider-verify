@@ -1,0 +1,152 @@
+terraform {
+  required_providers {
+    verify = {
+      source = "christian-verderame/verify"
+    }
+
+    random = {
+      source = "hashicorp/random"
+    }
+  }
+}
+
+provider "verify" {}
+
+# -------------------------------------------------------------------
+# The certificate and private key live in examples/cert/ and are
+# generated once. Run that root first, upload cert.pem to IBM Verify,
+# then run this root as many times as needed — the key never changes.
+# -------------------------------------------------------------------
+
+# Read the private key that was written to disk by examples/cert/.
+# If the file does not exist, run: cd examples/cert && terraform apply
+locals {
+  private_key_pem = file("${path.module}/key.pem")
+}
+
+resource "random_uuid" "jwt_id" {}
+
+# Sign a fresh JWT on every apply using the stable private key.
+# The JWT is short-lived (15 min) but the key pair never rotates,
+# so IBM Verify can always verify the signature with the cert it has.
+resource "verify_jwt" "custom" {
+  issuer             = "https://demo.ibm.com"
+  subject            = "bretton"
+  key_id             = "demotokensigner"
+  jwt_id             = random_uuid.jwt_id.result
+  private_key_pem    = local.private_key_pem
+  expires_in_seconds = 900
+}
+
+output "jwt" {
+  value     = verify_jwt.custom.token
+  sensitive = true
+}
+
+output "jwt_issued_at" {
+  value = verify_jwt.custom.issued_at
+}
+
+output "jwt_expires_at" {
+  value = verify_jwt.custom.expires_at
+}
+
+variable "verify_tenant_url" {
+  type        = string
+  description = "IBM Verify tenant URL."
+}
+
+variable "sts_client_id" {
+  type        = string
+  description = "IBM Verify STS client ID."
+}
+
+variable "sts_client_secret" {
+  type        = string
+  description = "IBM Verify STS client secret."
+  sensitive   = true
+}
+
+resource "verify_token_exchange" "example" {
+  tenant_url    = var.verify_tenant_url
+  client_id     = var.sts_client_id
+  client_secret = var.sts_client_secret
+  subject_token = verify_jwt.custom.token
+
+  # IBM Verify STS clients can be configured with a custom token type URN
+  # instead of the standard RFC 8693 urn:ietf:params:oauth:token-type:jwt.
+  # This tenant requires the custom URN below — change it to match whatever
+  # is configured under Security → API clients → STS → Token exchange settings.
+  subject_token_type = "urn:demo:token-type:user-jwt"
+}
+
+output "access_token" {
+  value     = verify_token_exchange.example.access_token
+  sensitive = true
+}
+
+output "access_token_expires_in" {
+  value = verify_token_exchange.example.expires_in
+}
+
+output "issued_token_type" {
+  value = verify_token_exchange.example.issued_token_type
+}
+
+output "token_type" {
+  value = verify_token_exchange.example.token_type
+}
+
+output "grant_id" {
+  value = verify_token_exchange.example.grant_id
+}
+
+output "scope" {
+  value = verify_token_exchange.example.scope
+}
+
+
+
+
+
+
+# data source — re-evaluated on every plan/apply so the result always
+# reflects the live token status, not a cached value from a previous run.
+data "verify_token_introspection" "example" {
+  tenant_url    = var.verify_tenant_url
+  client_id     = var.sts_client_id
+  client_secret = var.sts_client_secret
+  token         = verify_token_exchange.example.access_token
+}
+
+output "token_active" {
+  value = data.verify_token_introspection.example.active
+}
+
+output "introspected_subject" {
+  value = data.verify_token_introspection.example.subject
+}
+
+output "introspected_username" {
+  value = data.verify_token_introspection.example.username
+}
+
+output "introspected_preferred_username" {
+  value = data.verify_token_introspection.example.preferred_username
+}
+
+output "introspected_name" {
+  value = data.verify_token_introspection.example.name
+}
+
+output "introspected_given_name" {
+  value = data.verify_token_introspection.example.given_name
+}
+
+output "introspected_scope" {
+  value = data.verify_token_introspection.example.scope
+}
+
+output "introspected_expires_at" {
+  value = data.verify_token_introspection.example.expires_at
+}
