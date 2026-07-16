@@ -16,3 +16,6 @@ examples/cert.pem
 # Go build cache
 *.exe
 *.test
+
+#keys for my project
+keys.txt
