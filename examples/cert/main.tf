@@ -20,9 +20,12 @@ provider "verify" {}
 #   cd examples/cert
 #   terraform init && terraform apply -auto-approve
 #
-# Then upload cert.pem to your IBM Verify STS client, and from that
-# point on only run terraform apply in examples/ — the key pair here
-# will never be regenerated unless you explicitly destroy this root.
+# Both files are written to examples/certificates/ — a dedicated
+# folder that is excluded from git via .gitignore.
+# Then upload examples/certificates/cert.pem to your IBM Verify STS
+# client. From that point on only run terraform apply in examples/ —
+# the key pair here will never be regenerated unless you explicitly
+# destroy this root.
 # -------------------------------------------------------------------
 resource "verify_certificate" "this" {
   common_name   = "DemoTokenSigner"
@@ -32,19 +35,20 @@ resource "verify_certificate" "this" {
   key_size      = 4096
 }
 
-# Write the public certificate to disk so it can be uploaded to
-# IBM Verify and so the main config can reference its path.
+# Write the public certificate to the certificates/ directory so it
+# can be uploaded to IBM Verify. The directory is gitignored — the
+# cert is not sensitive but is kept alongside the key for clarity.
 resource "local_file" "certificate" {
   content         = verify_certificate.this.certificate_pem
-  filename        = "${path.module}/../cert.pem"
+  filename        = "${path.module}/../certificates/cert.pem"
   file_permission = "0644"
 }
 
-# Write the private key to disk so the main config can read it with
-# file() — it stays here permanently and is never regenerated.
+# Write the private key to the certificates/ directory. This file
+# must never be committed — it is excluded by .gitignore.
 resource "local_sensitive_file" "private_key" {
   content         = verify_certificate.this.private_key_pem
-  filename        = "${path.module}/../key.pem"
+  filename        = "${path.module}/../certificates/key.pem"
   file_permission = "0600"
 }
 
@@ -55,11 +59,11 @@ output "certificate_pem" {
 
 output "certificate_path" {
   value       = local_file.certificate.filename
-  description = "Path to cert.pem on disk."
+  description = "Path to certificates/cert.pem on disk."
 }
 
 output "private_key_path" {
   value       = local_sensitive_file.private_key.filename
-  description = "Path to key.pem on disk."
+  description = "Path to certificates/key.pem on disk."
   sensitive   = true
 }
