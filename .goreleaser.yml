@@ -1,0 +1,69 @@
+# GoReleaser configuration for terraform-provider-verify.
+# This file tells goreleaser how to build and package the provider
+# for all platforms so the Terraform Registry can distribute it.
+version: 2
+
+before:
+  hooks:
+    # Tidy dependencies before building.
+    - go mod tidy
+
+builds:
+  - # Build the provider binary for every platform Terraform supports.
+    env:
+      - CGO_ENABLED=0
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - "-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}"
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows on ARM64 is not supported by Terraform.
+      - goos: windows
+        goarch: arm64
+    binary: "{{ .ProjectName }}_v{{ .Version }}"
+
+archives:
+  - # Package each binary into a zip file named exactly as the
+    # Terraform Registry protocol requires.
+    format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  # The Terraform Registry verifies the SHA256 checksum of every binary.
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+
+signs:
+  - # Sign the SHA256SUMS file with the GPG key stored in GitHub Secrets.
+    # The Terraform Registry requires this signature to trust the release.
+    artifacts: checksum
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+
+release:
+  # Create a GitHub Release automatically when a tag is pushed.
+  # All zip files, the checksum file, and the signature are attached.
+  draft: false
+
+changelog:
+  # Auto-generate a changelog from commit messages in the release notes.
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
