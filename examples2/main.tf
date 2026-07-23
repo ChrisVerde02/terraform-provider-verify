@@ -6,7 +6,6 @@ terraform {
       source  = "ChrisVerde02/verify"
       version = "~> 0.1"
     }
-
     random = {
       source = "hashicorp/random"
     }
@@ -15,50 +14,44 @@ terraform {
 
 provider "verify" {}
 
-# Read the private key from the path supplied in terraform.tfvars.
-# The key was generated once by examples/cert/ and never changes.
-locals {
+# ---------------------------------------------------------------
+# Module: jwt
+# Signs a fresh RS256 JWT using the stable private key on disk.
+# ---------------------------------------------------------------
+module "jwt" {
+  source = "../modules/jwt"
+
+  issuer          = var.jwt_issuer
+  subject         = var.jwt_subject
+  key_id          = var.jwt_key_id
   private_key_pem = file(var.private_key_path)
 }
 
-variable "private_key_path" {
-  type        = string
-  description = "Path to the RSA private key PEM file."
-  default     = "../examples/certificates/key.pem"
-}
+# ---------------------------------------------------------------
+# Module: token_exchange
+# Exchanges the JWT for an IBM Verify access token.
+# ---------------------------------------------------------------
+module "token_exchange" {
+  source = "../modules/token_exchange"
 
-# Generates a new UUID whenever any JWT input changes.
-# Prevents IBM Verify from rejecting the token with a jti replay error.
-resource "random_uuid" "jwt_id" {
-  keepers = {
-    issuer  = var.jwt_issuer
-    subject = var.jwt_subject
-    key_id  = var.jwt_key_id
-  }
-}
-
-resource "verify_jwt" "custom" {
-  issuer             = var.jwt_issuer
-  subject            = var.jwt_subject
-  key_id             = var.jwt_key_id
-  jwt_id             = random_uuid.jwt_id.result
-  private_key_pem    = local.private_key_pem
-  expires_in_seconds = 900
-}
-
-resource "verify_token_exchange" "example" {
   tenant_url         = var.verify_tenant_url
   client_id          = var.sts_client_id
   client_secret      = var.sts_client_secret
-  subject_token      = verify_jwt.custom.token
+  subject_token      = module.jwt.token
   subject_token_type = var.subject_token_type
 }
 
-data "verify_token_introspection" "example" {
+# ---------------------------------------------------------------
+# Module: introspection
+# Verifies the access token is active — re-evaluated every apply.
+# ---------------------------------------------------------------
+module "introspection" {
+  source = "../modules/introspection"
+
   tenant_url    = var.verify_tenant_url
   client_id     = var.sts_client_id
   client_secret = var.sts_client_secret
-  token         = verify_token_exchange.example.access_token
+  token         = module.token_exchange.access_token
 }
 
 # ---------------------------------------------------------------
@@ -81,6 +74,12 @@ variable "sts_client_secret" {
   sensitive   = true
 }
 
+variable "private_key_path" {
+  type        = string
+  description = "Path to the RSA private key PEM file."
+  default     = "../examples/certificates/key.pem"
+}
+
 variable "jwt_issuer" {
   type        = string
   description = "Value placed in the JWT iss claim."
@@ -88,12 +87,12 @@ variable "jwt_issuer" {
 
 variable "jwt_subject" {
   type        = string
-  description = "IBM Verify Cloud Directory username placed in the JWT sub claim."
+  description = "IBM Verify Cloud Directory username."
 }
 
 variable "jwt_key_id" {
   type        = string
-  description = "Certificate label in IBM Verify — must match the label set when uploading cert.pem."
+  description = "Certificate label in IBM Verify."
 }
 
 variable "subject_token_type" {
@@ -107,38 +106,38 @@ variable "subject_token_type" {
 # ---------------------------------------------------------------
 
 output "access_token" {
-  value     = verify_token_exchange.example.access_token
+  value     = module.token_exchange.access_token
   sensitive = true
 }
 
 output "access_token_expires_in" {
-  value = verify_token_exchange.example.expires_in
+  value = module.token_exchange.expires_in
 }
 
 output "grant_id" {
-  value = verify_token_exchange.example.grant_id
+  value = module.token_exchange.grant_id
 }
 
 output "issued_token_type" {
-  value = verify_token_exchange.example.issued_token_type
+  value = module.token_exchange.issued_token_type
 }
 
 output "token_type" {
-  value = verify_token_exchange.example.token_type
+  value = module.token_exchange.token_type
 }
 
 output "token_active" {
-  value = data.verify_token_introspection.example.active
+  value = module.introspection.active
 }
 
 output "introspected_subject" {
-  value = data.verify_token_introspection.example.subject
+  value = module.introspection.subject
 }
 
 output "introspected_preferred_username" {
-  value = data.verify_token_introspection.example.preferred_username
+  value = module.introspection.preferred_username
 }
 
 output "introspected_expires_at" {
-  value = data.verify_token_introspection.example.expires_at
+  value = module.introspection.expires_at
 }
