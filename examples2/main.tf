@@ -4,10 +4,7 @@ terraform {
       # Uses the published provider from the Terraform Registry.
       # No go build, no ~/.terraformrc override needed.
       source  = "ChrisVerde02/verify"
-      version = "~> 0.1"
-    }
-    random = {
-      source = "hashicorp/random"
+      version = "~> 0.2"
     }
   }
 }

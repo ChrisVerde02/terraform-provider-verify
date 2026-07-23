@@ -74,6 +74,13 @@ func (p *VerifyProvider) DataSources(
 	ctx context.Context,
 ) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
+		// JWT — generates a fresh signed JWT on every plan/apply.
+		// Preferred over the verify_jwt resource for idempotent workflows.
+		datasources.NewJWTDataSource,
+		// TokenExchange — calls IBM Verify on every plan/apply.
+		// Preferred over the verify_token_exchange resource so the access
+		// token is never served from stale Terraform state.
+		datasources.NewTokenExchangeDataSource,
 		// Introspection is a data source so Terraform re-evaluates it on
 		// every plan/apply, always reflecting the live token status.
 		datasources.NewTokenIntrospectionDataSource,
