@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	providercrypto "github.com/Christian-Verderame/terraform-provider-verify/internal/crypto"
+	providercrypto "github.com/ChrisVerde02/ibmverify-go/crypto"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"

@@ -3,7 +3,7 @@ package resources
 import (
 	"context"
 
-	verifyclient "github.com/Christian-Verderame/terraform-provider-verify/internal/client"
+	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
