@@ -1,3 +1,6 @@
+# Bob AI assistant artifacts — never commit
+.bob/
+
 # Provider binary
 terraform-provider-verify
 
