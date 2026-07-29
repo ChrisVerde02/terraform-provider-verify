@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"time"
 
 	providercrypto "github.com/ChrisVerde02/ibmverify-go/crypto"
 
@@ -29,6 +30,9 @@ type CertificateResourceModel struct {
 
 	CertificatePEM types.String `tfsdk:"certificate_pem"`
 	PrivateKeyPEM  types.String `tfsdk:"private_key_pem"`
+	// ExpiresAt is the Unix timestamp when the certificate's NotAfter date
+	// is reached. Read() uses this to decide whether to regenerate.
+	ExpiresAt types.Int64 `tfsdk:"expires_at"`
 }
 
 // NewCertificateResource creates the resource.
@@ -51,9 +55,10 @@ func (r *CertificateResource) Schema(
 	req resource.SchemaRequest,
 	resp *resource.SchemaResponse,
 ) {
-
 	resp.Schema = schema.Schema{
-		Description: "Generates a self-signed X.509 certificate.",
+		Description: "Generates a self-signed X.509 certificate. " +
+			"The certificate is reused across plans until it expires, " +
+			"then automatically regenerated.",
 
 		Attributes: map[string]schema.Attribute{
 
@@ -93,36 +98,39 @@ func (r *CertificateResource) Schema(
 			},
 
 			"certificate_pem": schema.StringAttribute{
-				Computed: true,
+				Description: "Generated X.509 certificate in PEM format.",
+				Computed:    true,
 			},
 
 			"private_key_pem": schema.StringAttribute{
-				Computed:  true,
-				Sensitive: true,
+				Description: "RSA private key in PEM format.",
+				Computed:    true,
+				Sensitive:   true,
+			},
+
+			"expires_at": schema.Int64Attribute{
+				Description: "Certificate expiry as a Unix timestamp (NotAfter). " +
+					"The resource regenerates the certificate automatically when " +
+					"this timestamp is within 24 hours of the current time.",
+				Computed: true,
 			},
 		},
 	}
 }
 
-// Create generates the certificate.
+// Create generates the certificate and stores expiry in state.
 func (r *CertificateResource) Create(
 	ctx context.Context,
 	req resource.CreateRequest,
 	resp *resource.CreateResponse,
 ) {
-
 	var plan CertificateResourceModel
 
-	// Read Terraform configuration.
-	resp.Diagnostics.Append(
-		req.Plan.Get(ctx, &plan)...,
-	)
-
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Generate certificate.
 	result, err := providercrypto.GenerateSelfSignedCertificate(
 		providercrypto.CertificateRequest{
 			CommonName:   plan.CommonName.ValueString(),
@@ -132,7 +140,6 @@ func (r *CertificateResource) Create(
 			KeySize:      int(plan.KeySize.ValueInt64()),
 		},
 	)
-
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to generate certificate",
@@ -141,39 +148,80 @@ func (r *CertificateResource) Create(
 		return
 	}
 
-	// Save generated values into Terraform state.
 	plan.CertificatePEM = types.StringValue(result.CertificatePEM)
 	plan.PrivateKeyPEM = types.StringValue(result.PrivateKeyPEM)
-
-	resp.Diagnostics.Append(
-		resp.State.Set(ctx, &plan)...,
+	// Store expiry as Unix timestamp so Read() can compare against time.Now().
+	plan.ExpiresAt = types.Int64Value(
+		time.Now().UTC().AddDate(0, 0, int(plan.ValidityDays.ValueInt64())).Unix(),
 	)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Read refreshes the resource state.
+// Read checks whether the certificate has expired.
+// If it is still valid (more than 24 hours from expiry) the existing state
+// is kept unchanged — no new certificate is generated.
+// If it has expired (or is within 24 hours of expiry) a new certificate and
+// key pair are generated and stored, making the resource self-healing.
 func (r *CertificateResource) Read(
 	ctx context.Context,
 	req resource.ReadRequest,
 	resp *resource.ReadResponse,
 ) {
-	// Nothing to refresh.
+	var state CertificateResourceModel
+
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// 24-hour buffer — regenerate before the cert actually expires.
+	const bufferSeconds = 24 * 60 * 60
+
+	if time.Now().Unix() < state.ExpiresAt.ValueInt64()-bufferSeconds {
+		// Certificate is still valid — keep existing state as-is.
+		return
+	}
+
+	// Certificate has expired or is about to — regenerate.
+	result, err := providercrypto.GenerateSelfSignedCertificate(
+		providercrypto.CertificateRequest{
+			CommonName:   state.CommonName.ValueString(),
+			Organization: state.Organization.ValueString(),
+			Country:      state.Country.ValueString(),
+			ValidityDays: int(state.ValidityDays.ValueInt64()),
+			KeySize:      int(state.KeySize.ValueInt64()),
+		},
+	)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to regenerate expired certificate",
+			err.Error(),
+		)
+		return
+	}
+
+	state.CertificatePEM = types.StringValue(result.CertificatePEM)
+	state.PrivateKeyPEM = types.StringValue(result.PrivateKeyPEM)
+	state.ExpiresAt = types.Int64Value(
+		time.Now().UTC().AddDate(0, 0, int(state.ValidityDays.ValueInt64())).Unix(),
+	)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update updates the resource.
+// Update is unused — all configurable fields use RequiresReplace().
 func (r *CertificateResource) Update(
 	ctx context.Context,
 	req resource.UpdateRequest,
 	resp *resource.UpdateResponse,
 ) {
-	// Every configurable field RequiresReplace(),
-	// so Terraform will recreate the resource.
 }
 
-// Delete removes the resource.
+// Delete removes the resource from Terraform state.
 func (r *CertificateResource) Delete(
 	ctx context.Context,
 	req resource.DeleteRequest,
 	resp *resource.DeleteResponse,
 ) {
-	// Nothing to delete.
 }

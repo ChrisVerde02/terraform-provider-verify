@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"time"
 
 	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
 
@@ -19,10 +20,10 @@ type TokenExchangeResource struct{}
 
 // TokenExchangeResourceModel represents the Terraform configuration and state.
 type TokenExchangeResourceModel struct {
-	TenantURL        types.String `tfsdk:"tenant_url"`
-	ClientID         types.String `tfsdk:"client_id"`
-	ClientSecret     types.String `tfsdk:"client_secret"`
-	SubjectToken     types.String `tfsdk:"subject_token"`
+	TenantURL    types.String `tfsdk:"tenant_url"`
+	ClientID     types.String `tfsdk:"client_id"`
+	ClientSecret types.String `tfsdk:"client_secret"`
+	SubjectToken types.String `tfsdk:"subject_token"`
 	// SubjectTokenType identifies the type of token being exchanged.
 	// The RFC 8693 standard URN for a JWT is:
 	//   urn:ietf:params:oauth:token-type:jwt
@@ -31,6 +32,10 @@ type TokenExchangeResourceModel struct {
 
 	AccessToken     types.String `tfsdk:"access_token"`
 	ExpiresIn       types.Int64  `tfsdk:"expires_in"`
+	// ExpiresAt is the absolute Unix timestamp when the access token expires.
+	// Computed from time.Now() + ExpiresIn at Create/Read time.
+	// Read() uses this to decide whether to re-exchange or reuse.
+	ExpiresAt       types.Int64  `tfsdk:"expires_at"`
 	GrantID         types.String `tfsdk:"grant_id"`
 	IssuedTokenType types.String `tfsdk:"issued_token_type"`
 	Scope           types.String `tfsdk:"scope"`
@@ -58,7 +63,9 @@ func (r *TokenExchangeResource) Schema(
 	resp *resource.SchemaResponse,
 ) {
 	resp.Schema = schema.Schema{
-		Description: "Exchanges a custom JWT for an IBM Verify access token.",
+		Description: "Exchanges a custom JWT for an IBM Verify access token. " +
+			"The access token is reused across plans until it expires, then " +
+			"automatically re-exchanged.",
 
 		Attributes: map[string]schema.Attribute{
 			"tenant_url": schema.StringAttribute{
@@ -121,6 +128,13 @@ func (r *TokenExchangeResource) Schema(
 				Computed:    true,
 			},
 
+			"expires_at": schema.Int64Attribute{
+				Description: "Access-token expiry as a Unix timestamp. " +
+					"The resource re-exchanges automatically when this timestamp " +
+					"is within 60 seconds of the current time.",
+				Computed: true,
+			},
+
 			"grant_id": schema.StringAttribute{
 				Description: "Grant ID returned by IBM Verify.",
 				Computed:    true,
@@ -144,6 +158,44 @@ func (r *TokenExchangeResource) Schema(
 	}
 }
 
+// exchange calls IBM Verify and populates the token fields on state.
+// It is shared between Create and Read.
+func exchange(
+	ctx context.Context,
+	state *TokenExchangeResourceModel,
+) error {
+	subjectTokenType := state.SubjectTokenType.ValueString()
+	if subjectTokenType == "" {
+		subjectTokenType = "urn:demo:token-type:user-jwt"
+	}
+
+	state.SubjectTokenType = types.StringValue(subjectTokenType)
+
+	result, err := verifyclient.ExchangeToken(
+		ctx,
+		verifyclient.TokenExchangeRequest{
+			TenantURL:        state.TenantURL.ValueString(),
+			ClientID:         state.ClientID.ValueString(),
+			ClientSecret:     state.ClientSecret.ValueString(),
+			SubjectToken:     state.SubjectToken.ValueString(),
+			SubjectTokenType: subjectTokenType,
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	state.AccessToken = types.StringValue(result.AccessToken)
+	state.ExpiresIn = types.Int64Value(result.ExpiresIn)
+	// Compute absolute expiry from current time + lifetime returned by IBM Verify.
+	state.ExpiresAt = types.Int64Value(time.Now().Unix() + result.ExpiresIn)
+	state.GrantID = types.StringValue(result.GrantID)
+	state.IssuedTokenType = types.StringValue(result.IssuedTokenType)
+	state.Scope = types.StringValue(result.Scope)
+	state.TokenType = types.StringValue(result.TokenType)
+	return nil
+}
+
 // Create exchanges the JWT for an IBM Verify access token.
 func (r *TokenExchangeResource) Create(
 	ctx context.Context,
@@ -157,52 +209,46 @@ func (r *TokenExchangeResource) Create(
 		return
 	}
 
-	// Use the caller-supplied subject_token_type if provided. IBM Verify STS
-	// clients can be configured with either the standard RFC 8693 URN
-	// (urn:ietf:params:oauth:token-type:jwt) or a custom URN defined in the
-	// tenant's Token exchange settings. Always set subject_token_type
-	// explicitly in main.tf to match your tenant's STS configuration.
-	subjectTokenType := plan.SubjectTokenType.ValueString()
-	if subjectTokenType == "" {
-		subjectTokenType = "urn:demo:token-type:user-jwt"
-	}
-
-	plan.SubjectTokenType = types.StringValue(subjectTokenType)
-
-	result, err := verifyclient.ExchangeToken(
-		ctx,
-		verifyclient.TokenExchangeRequest{
-			TenantURL:        plan.TenantURL.ValueString(),
-			ClientID:         plan.ClientID.ValueString(),
-			ClientSecret:     plan.ClientSecret.ValueString(),
-			SubjectToken:     plan.SubjectToken.ValueString(),
-			SubjectTokenType: subjectTokenType,
-		},
-	)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to exchange JWT",
-			err.Error(),
-		)
+	if err := exchange(ctx, &plan); err != nil {
+		resp.Diagnostics.AddError("Unable to exchange JWT", err.Error())
 		return
 	}
-
-	plan.AccessToken = types.StringValue(result.AccessToken)
-	plan.ExpiresIn = types.Int64Value(result.ExpiresIn)
-	plan.GrantID = types.StringValue(result.GrantID)
-	plan.IssuedTokenType = types.StringValue(result.IssuedTokenType)
-	plan.Scope = types.StringValue(result.Scope)
-	plan.TokenType = types.StringValue(result.TokenType)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Read preserves the token-exchange result stored in Terraform state.
+// Read checks whether the stored access token has expired.
+// If it is still valid (more than 60 seconds from expiry) the existing state
+// is kept unchanged — no API call is made to IBM Verify.
+// If it has expired (or is within 60 seconds of expiry) a fresh token is
+// obtained by re-exchanging with IBM Verify.
 func (r *TokenExchangeResource) Read(
 	ctx context.Context,
 	req resource.ReadRequest,
 	resp *resource.ReadResponse,
 ) {
+	var state TokenExchangeResourceModel
+
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// 60-second buffer — re-exchange before IBM Verify rejects the token.
+	const bufferSeconds = 60
+
+	if time.Now().Unix() < state.ExpiresAt.ValueInt64()-bufferSeconds {
+		// Token is still valid — keep existing state as-is.
+		return
+	}
+
+	// Token has expired or is about to — re-exchange for a fresh one.
+	if err := exchange(ctx, &state); err != nil {
+		resp.Diagnostics.AddError("Unable to re-exchange expired access token", err.Error())
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 // Update is unused because all inputs require replacement.

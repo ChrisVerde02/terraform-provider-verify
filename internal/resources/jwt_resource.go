@@ -2,6 +2,8 @@ package resources
 
 import (
 	"context"
+	"crypto/rand"
+	"fmt"
 	"time"
 
 	providercrypto "github.com/ChrisVerde02/ibmverify-go/crypto"
@@ -54,7 +56,9 @@ func (r *JWTResource) Schema(
 	resp *resource.SchemaResponse,
 ) {
 	resp.Schema = schema.Schema{
-		Description: "Generates an RS256-signed JWT using an RSA private key.",
+		Description: "Generates an RS256-signed JWT using an RSA private key. " +
+			"The JWT is reused across plans until it expires, then automatically " +
+			"regenerated with a fresh jti claim.",
 
 		Attributes: map[string]schema.Attribute{
 			"issuer": schema.StringAttribute{
@@ -82,11 +86,10 @@ func (r *JWTResource) Schema(
 			},
 
 			"jwt_id": schema.StringAttribute{
-				Description: "Unique value placed in the jti claim.",
-				Required:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				Description: "Unique value placed in the jti claim. " +
+					"Automatically refreshed when the JWT expires.",
+				Computed: true,
+				Optional: true,
 			},
 
 			"private_key_pem": schema.StringAttribute{
@@ -118,11 +121,52 @@ func (r *JWTResource) Schema(
 			},
 
 			"expires_at": schema.Int64Attribute{
-				Description: "JWT exp value as a Unix timestamp.",
-				Computed:    true,
+				Description: "JWT exp value as a Unix timestamp. " +
+					"The resource regenerates the JWT automatically when " +
+					"this timestamp is within 60 seconds of the current time.",
+				Computed: true,
 			},
 		},
 	}
+}
+
+// generateJWTID produces a random UUID for use as a jti claim.
+func generateJWTID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
+	}
+	return fmt.Sprintf(
+		"%08x-%04x-%04x-%04x-%12x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:],
+	)
+}
+
+// signJWT is a shared helper used by both Create and Read.
+func signJWT(state *JWTResourceModel) error {
+	jwtID := generateJWTID()
+
+	result, err := providercrypto.GenerateSignedJWT(
+		providercrypto.JWTRequest{
+			Issuer:        state.Issuer.ValueString(),
+			Subject:       state.Subject.ValueString(),
+			KeyID:         state.KeyID.ValueString(),
+			JWTID:         jwtID,
+			PrivateKeyPEM: state.PrivateKeyPEM.ValueString(),
+			ExpiresIn: time.Duration(
+				state.ExpiresIn.ValueInt64(),
+			) * time.Second,
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	state.JWTID = types.StringValue(jwtID)
+	state.Token = types.StringValue(result.Token)
+	state.IssuedAt = types.Int64Value(result.IssuedAt)
+	state.ExpiresAt = types.Int64Value(result.ExpiresAt)
+	return nil
 }
 
 // Create generates and signs the JWT.
@@ -138,39 +182,46 @@ func (r *JWTResource) Create(
 		return
 	}
 
-	result, err := providercrypto.GenerateSignedJWT(
-		providercrypto.JWTRequest{
-			Issuer:        plan.Issuer.ValueString(),
-			Subject:       plan.Subject.ValueString(),
-			KeyID:         plan.KeyID.ValueString(),
-			JWTID:         plan.JWTID.ValueString(),
-			PrivateKeyPEM: plan.PrivateKeyPEM.ValueString(),
-			ExpiresIn: time.Duration(
-				plan.ExpiresIn.ValueInt64(),
-			) * time.Second,
-		},
-	)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to generate JWT",
-			err.Error(),
-		)
+	if err := signJWT(&plan); err != nil {
+		resp.Diagnostics.AddError("Unable to generate JWT", err.Error())
 		return
 	}
-
-	plan.Token = types.StringValue(result.Token)
-	plan.IssuedAt = types.Int64Value(result.IssuedAt)
-	plan.ExpiresAt = types.Int64Value(result.ExpiresAt)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Read retains the locally generated JWT in Terraform state.
+// Read checks whether the JWT has expired.
+// If it is still valid (more than 60 seconds from expiry) the existing state
+// is kept unchanged — no new JWT is generated and no API call is made.
+// If it has expired (or is within 60 seconds of expiry) a fresh JWT is signed
+// with a new jti claim, preventing IBM Verify replay rejection (CSIAQ5206E).
 func (r *JWTResource) Read(
 	ctx context.Context,
 	req resource.ReadRequest,
 	resp *resource.ReadResponse,
 ) {
+	var state JWTResourceModel
+
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// 60-second buffer — regenerate before IBM Verify rejects the token.
+	const bufferSeconds = 60
+
+	if time.Now().Unix() < state.ExpiresAt.ValueInt64()-bufferSeconds {
+		// JWT is still valid — keep existing state as-is.
+		return
+	}
+
+	// JWT has expired or is about to — regenerate with a fresh jti.
+	if err := signJWT(&state); err != nil {
+		resp.Diagnostics.AddError("Unable to regenerate expired JWT", err.Error())
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 // Update is unused because all JWT inputs require replacement.
