@@ -7,10 +7,10 @@ terraform {
   }
 }
 
-# Signs a fresh RS256 JWT on every plan and apply.
-# Because this is a data source, the jti claim is automatically unique on
-# each run — no random_uuid keeper is needed.
-data "verify_jwt" "this" {
+# Signs an RS256 JWT and stores it in Terraform state.
+# Because this is a resource with a smart Read(), the JWT is reused across
+# plans until it expires, then automatically regenerated with a fresh jti.
+resource "verify_jwt" "this" {
   issuer             = var.issuer
   subject            = var.subject
   key_id             = var.key_id
