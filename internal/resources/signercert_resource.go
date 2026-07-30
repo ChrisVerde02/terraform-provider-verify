@@ -22,19 +22,19 @@ import (
 var _ resource.Resource = &SignerCertResource{}
 
 // SignerCertResource implements the verify_signercert resource.
+// It uploads a PEM certificate to IBM Verify as a signer certificate,
+// which IBM Verify uses to validate JWT signatures during token exchange.
+// The resource obtains its own client credentials token internally so
+// access_token never needs to be stored in state or diffed.
 type SignerCertResource struct{}
 
 // SignerCertStateModel is stored in and read from Terraform state.
-// cert_manager_client_id and cert_manager_client_secret are stored so that
-// Read() and Delete() can obtain a fresh access token without needing it
-// passed in (access_token itself is write-only and never stored).
 type SignerCertStateModel struct {
-	TenantURL              types.String `tfsdk:"tenant_url"`
-	AccessToken            types.String `tfsdk:"access_token"`
-	CertManagerClientID    types.String `tfsdk:"cert_manager_client_id"`
+	TenantURL               types.String `tfsdk:"tenant_url"`
+	CertManagerClientID     types.String `tfsdk:"cert_manager_client_id"`
 	CertManagerClientSecret types.String `tfsdk:"cert_manager_client_secret"`
-	CertificatePEM         types.String `tfsdk:"certificate_pem"`
-	Label                  types.String `tfsdk:"label"`
+	CertificatePEM          types.String `tfsdk:"certificate_pem"`
+	Label                   types.String `tfsdk:"label"`
 }
 
 // NewSignerCertResource creates the resource.
@@ -61,7 +61,9 @@ func (r *SignerCertResource) Schema(
 		Description: "Uploads a signer certificate to IBM Verify. " +
 			"IBM Verify uses this certificate to validate the signature of " +
 			"custom JWTs during token exchange. The label must match the " +
-			"kid header in the JWT (key_id in verify_jwt).",
+			"kid header in the JWT (key_id in verify_jwt). " +
+			"The resource obtains its own client credentials token internally " +
+			"using cert_manager_client_id and cert_manager_client_secret.",
 
 		Attributes: map[string]schema.Attribute{
 			"tenant_url": schema.StringAttribute{
@@ -72,22 +74,9 @@ func (r *SignerCertResource) Schema(
 				},
 			},
 
-			// access_token is WriteOnly — never stored in state, never diffed.
-			// The cert-manager client credentials are stored instead so that
-			// Read() and Delete() can obtain a fresh token independently.
-			"access_token": schema.StringAttribute{
-				Description: "IBM Verify access token with manageCerts entitlement. " +
-					"Write-only — never stored in state.",
-				Required:  true,
-				Sensitive: true,
-				WriteOnly: true,
-			},
-
-			// cert_manager_client_id and cert_manager_client_secret are stored
-			// in state so Read() and Delete() can get a fresh token when needed.
 			"cert_manager_client_id": schema.StringAttribute{
-				Description: "Client ID of the cert-manager API client. " +
-					"Stored in state so Read and Delete can obtain a fresh token.",
+				Description: "Client ID of the IBM Verify API client with manageCerts entitlement. " +
+					"Used to obtain a client credentials token for all cert operations.",
 				Required: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -123,9 +112,10 @@ func (r *SignerCertResource) Schema(
 	}
 }
 
-// freshToken obtains a new client credentials access token from IBM Verify.
-func freshToken(ctx context.Context, tenantURL, clientID, clientSecret string) (string, error) {
+// getToken obtains a fresh client credentials access token from IBM Verify.
+func (r *SignerCertResource) getToken(ctx context.Context, tenantURL, clientID, clientSecret string) (string, error) {
 	endpoint := strings.TrimRight(tenantURL, "/") + "/v1.0/endpoint/default/token"
+
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
 	form.Set("client_id", clientID)
@@ -133,14 +123,14 @@ func freshToken(ctx context.Context, tenantURL, clientID, clientSecret string) (
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBufferString(form.Encode()))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("create token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("send token request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -153,7 +143,10 @@ func freshToken(ctx context.Context, tenantURL, clientID, clientSecret string) (
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", err
+		return "", fmt.Errorf("decode token response: %w", err)
+	}
+	if result.AccessToken == "" {
+		return "", fmt.Errorf("token response contained no access_token")
 	}
 	return result.AccessToken, nil
 }
@@ -170,15 +163,22 @@ func (r *SignerCertResource) Create(
 		return
 	}
 
-	err := verifyclient.ImportSignerCert(
-		ctx,
-		verifyclient.SignerCertRequest{
-			TenantURL:      plan.TenantURL.ValueString(),
-			AccessToken:    plan.AccessToken.ValueString(),
-			CertificatePEM: plan.CertificatePEM.ValueString(),
-			Label:          plan.Label.ValueString(),
-		},
+	token, err := r.getToken(ctx,
+		plan.TenantURL.ValueString(),
+		plan.CertManagerClientID.ValueString(),
+		plan.CertManagerClientSecret.ValueString(),
 	)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to get cert-manager token", err.Error())
+		return
+	}
+
+	err = verifyclient.ImportSignerCert(ctx, verifyclient.SignerCertRequest{
+		TenantURL:      plan.TenantURL.ValueString(),
+		AccessToken:    token,
+		CertificatePEM: plan.CertificatePEM.ValueString(),
+		Label:          plan.Label.ValueString(),
+	})
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to upload signer certificate to IBM Verify", err.Error())
 		return
@@ -188,6 +188,7 @@ func (r *SignerCertResource) Create(
 }
 
 // Read verifies the certificate still exists in IBM Verify.
+// If deleted externally, removes from state so Terraform re-uploads on next apply.
 func (r *SignerCertResource) Read(
 	ctx context.Context,
 	req resource.ReadRequest,
@@ -199,7 +200,7 @@ func (r *SignerCertResource) Read(
 		return
 	}
 
-	token, err := freshToken(ctx,
+	token, err := r.getToken(ctx,
 		state.TenantURL.ValueString(),
 		state.CertManagerClientID.ValueString(),
 		state.CertManagerClientSecret.ValueString(),
@@ -216,13 +217,14 @@ func (r *SignerCertResource) Read(
 	}
 
 	if result == nil {
+		// Deleted outside Terraform — remove from state so it gets re-uploaded.
 		resp.State.RemoveResource(ctx)
 		return
 	}
 	// Certificate still exists — keep state as-is.
 }
 
-// Update is never called — all stored fields use RequiresReplace.
+// Update is never called — all fields use RequiresReplace.
 func (r *SignerCertResource) Update(
 	ctx context.Context,
 	req resource.UpdateRequest,
@@ -242,7 +244,7 @@ func (r *SignerCertResource) Delete(
 		return
 	}
 
-	token, err := freshToken(ctx,
+	token, err := r.getToken(ctx,
 		state.TenantURL.ValueString(),
 		state.CertManagerClientID.ValueString(),
 		state.CertManagerClientSecret.ValueString(),

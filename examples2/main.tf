@@ -4,7 +4,7 @@ terraform {
       # Uses the published provider from the Terraform Registry.
       # No go build, no ~/.terraformrc override needed.
       source  = "ChrisVerde02/verify"
-      version = "0.4.0"
+      version = "0.4.1"
     }
   }
 }
@@ -34,28 +34,15 @@ module "certificate" {
 # Resource: signercert
 # Uploads the certificate from the certificate module to IBM Verify.
 # IBM Verify uses this to validate JWT signatures during token exchange.
-# The access_token comes from the cert-manager API client (client
-# credentials grant) which has manageCerts entitlement directly —
-# not via user impersonation, so no 403 permission intersection issue.
+# The resource obtains its own client credentials token internally —
+# no access_token needed in config, fully idempotent plans.
 # ---------------------------------------------------------------
 resource "verify_signercert" "this" {
-  tenant_url                = var.verify_tenant_url
-  access_token              = data.verify_client_credentials_token.cert_manager.access_token
-  cert_manager_client_id    = var.cert_manager_client_id
+  tenant_url                 = var.verify_tenant_url
+  cert_manager_client_id     = var.cert_manager_client_id
   cert_manager_client_secret = var.cert_manager_client_secret
-  certificate_pem           = module.certificate.certificate_pem
-  label                     = var.jwt_key_id
-}
-
-# ---------------------------------------------------------------
-# Data source: cert_manager_token
-# Obtains a fresh access token for the cert-manager API client on
-# every plan/apply using the client credentials grant type.
-# ---------------------------------------------------------------
-data "verify_client_credentials_token" "cert_manager" {
-  tenant_url    = var.verify_tenant_url
-  client_id     = var.cert_manager_client_id
-  client_secret = var.cert_manager_client_secret
+  certificate_pem            = module.certificate.certificate_pem
+  label                      = var.jwt_key_id
 }
 
 # ---------------------------------------------------------------

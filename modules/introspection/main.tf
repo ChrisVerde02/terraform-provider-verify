@@ -2,7 +2,7 @@ terraform {
   required_providers {
     verify = {
       source  = "ChrisVerde02/verify"
-      version = "0.4.0"
+      version = "0.4.1"
     }
   }
 }
