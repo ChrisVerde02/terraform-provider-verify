@@ -87,5 +87,11 @@ func (p *VerifyProvider) DataSources(
 		// Introspection is a data source so Terraform re-evaluates it on
 		// every plan/apply, always reflecting the live token status.
 		datasources.NewTokenIntrospectionDataSource,
+		// ClientCredentialsToken — obtains an access token using the OAuth 2.0
+		// client credentials grant. The token carries the API client's own
+		// entitlements directly, with no user impersonation. Used to call
+		// IBM Verify admin APIs (e.g. signer cert upload) from an API client
+		// that has the required entitlements.
+		datasources.NewClientCredentialsTokenDataSource,
 	}
 }
