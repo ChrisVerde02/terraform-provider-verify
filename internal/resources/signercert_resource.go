@@ -67,9 +67,9 @@ func (r *SignerCertResource) Schema(
 				Description: "IBM Verify access token with manageCerts entitlement.",
 				Required:    true,
 				Sensitive:   true,
-				// No RequiresReplace — the access token is a credential used to
-				// make the API call, not part of the certificate identity. A new
-				// token on each plan does not mean the cert needs to be re-uploaded.
+				// No RequiresReplace — changing the token does not affect the
+				// certificate already uploaded. Update() accepts the new token
+				// into state without making any API call.
 			},
 
 			"certificate_pem": schema.StringAttribute{
@@ -164,12 +164,23 @@ func (r *SignerCertResource) Read(
 	// Certificate still exists — keep state as-is.
 }
 
-// Update is unused — all inputs require replacement.
+// Update accepts a new access_token into state without touching IBM Verify.
+// The cert is already uploaded — only the credential used to upload it changed.
+// No RequiresReplace on access_token means Terraform routes token refreshes
+// here instead of destroying and recreating the cert.
 func (r *SignerCertResource) Update(
 	ctx context.Context,
 	req resource.UpdateRequest,
 	resp *resource.UpdateResponse,
 ) {
+	var plan SignerCertResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// Write the new plan (including refreshed access_token) into state.
+	// No API call needed — the certificate in IBM Verify is unchanged.
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 // Delete removes the certificate from IBM Verify.
