@@ -4,7 +4,7 @@ terraform {
       # Uses the published provider from the Terraform Registry.
       # No go build, no ~/.terraformrc override needed.
       source  = "ChrisVerde02/verify"
-      version = "0.3.7"
+      version = "0.3.8"
     }
   }
 }
@@ -28,32 +28,6 @@ module "certificate" {
 
   certificate_output_path = var.certificate_output_path
   private_key_output_path = var.private_key_output_path
-}
-
-# ---------------------------------------------------------------
-# Module: token_exchange (bootstrap)
-# A first token exchange using the existing stable credentials
-# is needed to get an access token so we can upload the cert.
-# This uses file() for the private key so it doesn't depend on
-# the certificate module — avoiding a circular dependency.
-# ---------------------------------------------------------------
-module "jwt_bootstrap" {
-  source = "../modules/jwt"
-
-  issuer          = var.jwt_issuer
-  subject         = var.jwt_subject
-  key_id          = var.jwt_key_id
-  private_key_pem = file(var.private_key_path)
-}
-
-module "token_exchange_bootstrap" {
-  source = "../modules/token_exchange"
-
-  tenant_url         = var.verify_tenant_url
-  client_id          = var.sts_client_id
-  client_secret      = var.sts_client_secret
-  subject_token      = module.jwt_bootstrap.token
-  subject_token_type = var.subject_token_type
 }
 
 # ---------------------------------------------------------------
@@ -198,13 +172,6 @@ variable "certificate_output_path" {
 variable "private_key_output_path" {
   type        = string
   description = "Path where key.pem will be written on disk. Never commit this file."
-  default     = "../examples/certificates/key.pem"
-}
-
-# Bootstrap — existing stable key on disk used to get the first access token
-variable "private_key_path" {
-  type        = string
-  description = "Path to the existing RSA private key on disk — used for bootstrap only."
   default     = "../examples/certificates/key.pem"
 }
 

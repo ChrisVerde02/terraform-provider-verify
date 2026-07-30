@@ -67,9 +67,9 @@ func (r *SignerCertResource) Schema(
 				Description: "IBM Verify access token with manageCerts entitlement.",
 				Required:    true,
 				Sensitive:   true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				// No RequiresReplace — the access token is a credential used to
+				// make the API call, not part of the certificate identity. A new
+				// token on each plan does not mean the cert needs to be re-uploaded.
 			},
 
 			"certificate_pem": schema.StringAttribute{
