@@ -4,7 +4,7 @@ terraform {
       # Uses the published provider from the Terraform Registry.
       # No go build, no ~/.terraformrc override needed.
       source  = "ChrisVerde02/verify"
-      version = "0.3.9"
+      version = "0.4.0"
     }
   }
 }
@@ -39,10 +39,12 @@ module "certificate" {
 # not via user impersonation, so no 403 permission intersection issue.
 # ---------------------------------------------------------------
 resource "verify_signercert" "this" {
-  tenant_url      = var.verify_tenant_url
-  access_token    = data.verify_client_credentials_token.cert_manager.access_token
-  certificate_pem = module.certificate.certificate_pem
-  label           = var.jwt_key_id
+  tenant_url                = var.verify_tenant_url
+  access_token              = data.verify_client_credentials_token.cert_manager.access_token
+  cert_manager_client_id    = var.cert_manager_client_id
+  cert_manager_client_secret = var.cert_manager_client_secret
+  certificate_pem           = module.certificate.certificate_pem
+  label                     = var.jwt_key_id
 }
 
 # ---------------------------------------------------------------

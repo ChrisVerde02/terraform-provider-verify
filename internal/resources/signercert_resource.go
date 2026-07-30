@@ -1,7 +1,14 @@
 package resources
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
 
 	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
 
@@ -15,17 +22,19 @@ import (
 var _ resource.Resource = &SignerCertResource{}
 
 // SignerCertResource implements the verify_signercert resource.
-// It uploads a PEM certificate to IBM Verify as a signer certificate,
-// which IBM Verify uses to validate JWT signatures during token exchange.
 type SignerCertResource struct{}
 
-// SignerCertResourceModel represents the Terraform state.
-type SignerCertResourceModel struct {
-	TenantURL      types.String `tfsdk:"tenant_url"`
-	AccessToken    types.String `tfsdk:"access_token"`
-	CertificatePEM types.String `tfsdk:"certificate_pem"`
-	// Label is the friendly name in IBM Verify — must match the kid in the JWT.
-	Label types.String `tfsdk:"label"`
+// SignerCertStateModel is stored in and read from Terraform state.
+// cert_manager_client_id and cert_manager_client_secret are stored so that
+// Read() and Delete() can obtain a fresh access token without needing it
+// passed in (access_token itself is write-only and never stored).
+type SignerCertStateModel struct {
+	TenantURL              types.String `tfsdk:"tenant_url"`
+	AccessToken            types.String `tfsdk:"access_token"`
+	CertManagerClientID    types.String `tfsdk:"cert_manager_client_id"`
+	CertManagerClientSecret types.String `tfsdk:"cert_manager_client_secret"`
+	CertificatePEM         types.String `tfsdk:"certificate_pem"`
+	Label                  types.String `tfsdk:"label"`
 }
 
 // NewSignerCertResource creates the resource.
@@ -63,13 +72,35 @@ func (r *SignerCertResource) Schema(
 				},
 			},
 
+			// access_token is WriteOnly — never stored in state, never diffed.
+			// The cert-manager client credentials are stored instead so that
+			// Read() and Delete() can obtain a fresh token independently.
 			"access_token": schema.StringAttribute{
-				Description: "IBM Verify access token with manageCerts entitlement.",
+				Description: "IBM Verify access token with manageCerts entitlement. " +
+					"Write-only — never stored in state.",
+				Required:  true,
+				Sensitive: true,
+				WriteOnly: true,
+			},
+
+			// cert_manager_client_id and cert_manager_client_secret are stored
+			// in state so Read() and Delete() can get a fresh token when needed.
+			"cert_manager_client_id": schema.StringAttribute{
+				Description: "Client ID of the cert-manager API client. " +
+					"Stored in state so Read and Delete can obtain a fresh token.",
+				Required: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+
+			"cert_manager_client_secret": schema.StringAttribute{
+				Description: "Client secret of the cert-manager API client.",
 				Required:    true,
 				Sensitive:   true,
-				// No RequiresReplace — changing the token does not affect the
-				// certificate already uploaded. Update() accepts the new token
-				// into state without making any API call.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 
 			"certificate_pem": schema.StringAttribute{
@@ -92,14 +123,48 @@ func (r *SignerCertResource) Schema(
 	}
 }
 
+// freshToken obtains a new client credentials access token from IBM Verify.
+func freshToken(ctx context.Context, tenantURL, clientID, clientSecret string) (string, error) {
+	endpoint := strings.TrimRight(tenantURL, "/") + "/v1.0/endpoint/default/token"
+	form := url.Values{}
+	form.Set("grant_type", "client_credentials")
+	form.Set("client_id", clientID)
+	form.Set("client_secret", clientSecret)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBufferString(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token request failed HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+	return result.AccessToken, nil
+}
+
 // Create uploads the certificate to IBM Verify.
 func (r *SignerCertResource) Create(
 	ctx context.Context,
 	req resource.CreateRequest,
 	resp *resource.CreateResponse,
 ) {
-	var plan SignerCertResourceModel
-
+	var plan SignerCertStateModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -115,10 +180,7 @@ func (r *SignerCertResource) Create(
 		},
 	)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to upload signer certificate to IBM Verify",
-			err.Error(),
-		)
+		resp.Diagnostics.AddError("Unable to upload signer certificate to IBM Verify", err.Error())
 		return
 	}
 
@@ -126,61 +188,46 @@ func (r *SignerCertResource) Create(
 }
 
 // Read verifies the certificate still exists in IBM Verify.
-// If it has been deleted externally, the resource is removed from state
-// so Terraform will re-upload it on the next apply.
 func (r *SignerCertResource) Read(
 	ctx context.Context,
 	req resource.ReadRequest,
 	resp *resource.ReadResponse,
 ) {
-	var state SignerCertResourceModel
-
+	var state SignerCertStateModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	result, err := verifyclient.GetSignerCert(
-		ctx,
+	token, err := freshToken(ctx,
 		state.TenantURL.ValueString(),
-		state.Label.ValueString(),
-		state.AccessToken.ValueString(),
+		state.CertManagerClientID.ValueString(),
+		state.CertManagerClientSecret.ValueString(),
 	)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to read signer certificate from IBM Verify",
-			err.Error(),
-		)
+		resp.Diagnostics.AddError("Unable to get cert-manager token for Read", err.Error())
+		return
+	}
+
+	result, err := verifyclient.GetSignerCert(ctx, state.TenantURL.ValueString(), state.Label.ValueString(), token)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to read signer certificate from IBM Verify", err.Error())
 		return
 	}
 
 	if result == nil {
-		// Certificate was deleted outside of Terraform — remove from state
-		// so it gets re-uploaded on next apply.
 		resp.State.RemoveResource(ctx)
 		return
 	}
-
 	// Certificate still exists — keep state as-is.
 }
 
-// Update accepts a new access_token into state without touching IBM Verify.
-// The cert is already uploaded — only the credential used to upload it changed.
-// No RequiresReplace on access_token means Terraform routes token refreshes
-// here instead of destroying and recreating the cert.
+// Update is never called — all stored fields use RequiresReplace.
 func (r *SignerCertResource) Update(
 	ctx context.Context,
 	req resource.UpdateRequest,
 	resp *resource.UpdateResponse,
 ) {
-	var plan SignerCertResourceModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	// Write the new plan (including refreshed access_token) into state.
-	// No API call needed — the certificate in IBM Verify is unchanged.
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 // Delete removes the certificate from IBM Verify.
@@ -189,24 +236,25 @@ func (r *SignerCertResource) Delete(
 	req resource.DeleteRequest,
 	resp *resource.DeleteResponse,
 ) {
-	var state SignerCertResourceModel
-
+	var state SignerCertStateModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	err := verifyclient.DeleteSignerCert(
-		ctx,
+	token, err := freshToken(ctx,
 		state.TenantURL.ValueString(),
-		state.Label.ValueString(),
-		state.AccessToken.ValueString(),
+		state.CertManagerClientID.ValueString(),
+		state.CertManagerClientSecret.ValueString(),
 	)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to delete signer certificate from IBM Verify",
-			err.Error(),
-		)
+		resp.Diagnostics.AddError("Unable to get cert-manager token for Delete", err.Error())
+		return
+	}
+
+	err = verifyclient.DeleteSignerCert(ctx, state.TenantURL.ValueString(), state.Label.ValueString(), token)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to delete signer certificate from IBM Verify", err.Error())
 		return
 	}
 }
