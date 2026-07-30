@@ -243,8 +243,11 @@ func (r *TokenExchangeResource) Read(
 	}
 
 	// Token has expired or is about to — re-exchange for a fresh one.
+	// If re-exchange fails (e.g. the subject JWT has also expired), remove
+	// this resource from state so Terraform recreates it cleanly on the next
+	// apply rather than surfacing a confusing mid-plan error.
 	if err := exchange(ctx, &state); err != nil {
-		resp.Diagnostics.AddError("Unable to re-exchange expired access token", err.Error())
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
