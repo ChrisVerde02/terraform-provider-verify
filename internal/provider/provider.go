@@ -64,6 +64,9 @@ func (p *VerifyProvider) Resources(
 		resources.NewCertificateResource,
 		resources.NewJWTResource,
 		resources.NewTokenExchangeResource,
+		// SignerCert uploads a PEM certificate to IBM Verify so it can
+		// validate JWT signatures during token exchange.
+		resources.NewSignerCertResource,
 		// TokenIntrospection is intentionally a data source, not a resource.
 		// See internal/datasources/token_introspection_data_source.go.
 	}

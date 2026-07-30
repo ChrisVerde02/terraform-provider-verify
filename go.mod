@@ -3,13 +3,13 @@ module github.com/Christian-Verderame/terraform-provider-verify
 go 1.26.4
 
 require (
-	github.com/ChrisVerde02/ibmverify-go v1.0.0
-	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/ChrisVerde02/ibmverify-go v1.1.0
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 )
 
 require (
 	github.com/fatih/color v1.18.0 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
 	github.com/hashicorp/go-plugin v1.7.0 // indirect

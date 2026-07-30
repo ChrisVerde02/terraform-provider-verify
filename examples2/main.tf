@@ -4,7 +4,7 @@ terraform {
       # Uses the published provider from the Terraform Registry.
       # No go build, no ~/.terraformrc override needed.
       source  = "ChrisVerde02/verify"
-      version = "~> 0.3"
+      version = "0.3.3"
     }
   }
 }
@@ -13,7 +13,8 @@ provider "verify" {}
 
 # ---------------------------------------------------------------
 # Module: jwt
-# Signs a fresh RS256 JWT using the stable private key on disk.
+# Signs an RS256 JWT using the stable private key on disk.
+# Reused until expired, then automatically regenerated.
 # ---------------------------------------------------------------
 module "jwt" {
   source = "../modules/jwt"
@@ -27,6 +28,7 @@ module "jwt" {
 # ---------------------------------------------------------------
 # Module: token_exchange
 # Exchanges the JWT for an IBM Verify access token.
+# Reused until expired, then automatically re-exchanged.
 # ---------------------------------------------------------------
 module "token_exchange" {
   source = "../modules/token_exchange"
@@ -73,7 +75,7 @@ variable "sts_client_secret" {
 
 variable "private_key_path" {
   type        = string
-  description = "Path to the RSA private key PEM file."
+  description = "Path to the RSA private key PEM file on disk."
   default     = "../examples/certificates/key.pem"
 }
 
