@@ -152,6 +152,9 @@ func (r *SignerCertResource) getToken(ctx context.Context, tenantURL, clientID, 
 }
 
 // Create uploads the certificate to IBM Verify.
+// If a certificate with the same label already exists (e.g. state was wiped
+// without running terraform destroy), it is adopted into state rather than
+// failing — so you never need to manually delete the cert from IBM Verify.
 func (r *SignerCertResource) Create(
 	ctx context.Context,
 	req resource.CreateRequest,
@@ -173,16 +176,34 @@ func (r *SignerCertResource) Create(
 		return
 	}
 
-	err = verifyclient.ImportSignerCert(ctx, verifyclient.SignerCertRequest{
-		TenantURL:      plan.TenantURL.ValueString(),
-		AccessToken:    token,
-		CertificatePEM: plan.CertificatePEM.ValueString(),
-		Label:          plan.Label.ValueString(),
-	})
+	// Check whether the cert already exists in IBM Verify before uploading.
+	// This handles the case where terraform.tfstate was wiped without running
+	// terraform destroy — the cert is already there, so we just adopt it.
+	existing, err := verifyclient.GetSignerCert(ctx,
+		plan.TenantURL.ValueString(),
+		plan.Label.ValueString(),
+		token,
+	)
 	if err != nil {
-		resp.Diagnostics.AddError("Unable to upload signer certificate to IBM Verify", err.Error())
+		resp.Diagnostics.AddError("Unable to check existing signer certificate", err.Error())
 		return
 	}
+
+	if existing == nil {
+		// Cert does not exist — upload it normally.
+		err = verifyclient.ImportSignerCert(ctx, verifyclient.SignerCertRequest{
+			TenantURL:      plan.TenantURL.ValueString(),
+			AccessToken:    token,
+			CertificatePEM: plan.CertificatePEM.ValueString(),
+			Label:          plan.Label.ValueString(),
+		})
+		if err != nil {
+			resp.Diagnostics.AddError("Unable to upload signer certificate to IBM Verify", err.Error())
+			return
+		}
+	}
+	// If existing != nil, the cert is already in IBM Verify — adopt it into
+	// state silently. No upload needed.
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
