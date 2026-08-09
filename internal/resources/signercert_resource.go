@@ -1,14 +1,7 @@
 package resources
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"strings"
 
 	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
 
@@ -112,6 +105,7 @@ func (r *SignerCertResource) Schema(
 	}
 }
 
+/*
 // getToken obtains a fresh client credentials access token from IBM Verify.
 func (r *SignerCertResource) getToken(ctx context.Context, tenantURL, clientID, clientSecret string) (string, error) {
 	endpoint := strings.TrimRight(tenantURL, "/") + "/v1.0/endpoint/default/token"
@@ -147,6 +141,20 @@ func (r *SignerCertResource) getToken(ctx context.Context, tenantURL, clientID, 
 	}
 	if result.AccessToken == "" {
 		return "", fmt.Errorf("token response contained no access_token")
+	}
+	return result.AccessToken, nil
+}
+
+*/
+
+func (r *SignerCertResource) getToken(ctx context.Context, tenantURL, clientID, clientSecret string) (string, error) {
+	result, err := verifyclient.GetClientCredentialsToken(ctx, verifyclient.ClientCredentialsRequest{
+		TenantURL:    tenantURL,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+	})
+	if err != nil {
+		return "", err
 	}
 	return result.AccessToken, nil
 }

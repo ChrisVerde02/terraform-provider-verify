@@ -1,14 +1,9 @@
 package datasources
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"strings"
+
+	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -18,9 +13,9 @@ import (
 var _ datasource.DataSource = &ClientCredentialsTokenDataSource{}
 
 // ClientCredentialsTokenDataSource implements verify_client_credentials_token.
-// It calls POST /oauth2/token with grant_type=client_credentials and returns
-// the access token. Re-evaluated on every plan and apply so the token is
-// always fresh and never read from stale Terraform state.
+// It calls POST /v1.0/endpoint/default/token with grant_type=client_credentials
+// and returns the access token. Re-evaluated on every plan and apply so the
+// token is always fresh and never read from stale Terraform state.
 type ClientCredentialsTokenDataSource struct{}
 
 // ClientCredentialsTokenModel is the Terraform schema model.
@@ -33,14 +28,6 @@ type ClientCredentialsTokenModel struct {
 	ExpiresIn   types.Int64  `tfsdk:"expires_in"`
 	TokenType   types.String `tfsdk:"token_type"`
 	Scope       types.String `tfsdk:"scope"`
-}
-
-// clientCredentialsResponse is the JSON body returned by IBM Verify.
-type clientCredentialsResponse struct {
-	AccessToken string `json:"access_token"`
-	ExpiresIn   int64  `json:"expires_in"`
-	TokenType   string `json:"token_type"`
-	Scope       string `json:"scope"`
 }
 
 // NewClientCredentialsTokenDataSource creates the data source.
@@ -117,52 +104,13 @@ func (d *ClientCredentialsTokenDataSource) Read(
 		return
 	}
 
-	tenantURL := strings.TrimRight(config.TenantURL.ValueString(), "/")
-	endpoint := tenantURL + "/v1.0/endpoint/default/token"
-
-	form := url.Values{}
-	form.Set("grant_type", "client_credentials")
-	form.Set("client_id", config.ClientID.ValueString())
-	form.Set("client_secret", config.ClientSecret.ValueString())
-
-	httpReq, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		endpoint,
-		bytes.NewBufferString(form.Encode()),
-	)
+	result, err := verifyclient.GetClientCredentialsToken(ctx, verifyclient.ClientCredentialsRequest{
+		TenantURL:    config.TenantURL.ValueString(),
+		ClientID:     config.ClientID.ValueString(),
+		ClientSecret: config.ClientSecret.ValueString(),
+	})
 	if err != nil {
-		resp.Diagnostics.AddError("Unable to create client credentials request", err.Error())
-		return
-	}
-
-	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	httpReq.Header.Set("Accept", "application/json")
-
-	httpResp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Unable to call IBM Verify token endpoint", err.Error())
-		return
-	}
-	defer httpResp.Body.Close()
-
-	body, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		resp.Diagnostics.AddError("Unable to read IBM Verify response", err.Error())
-		return
-	}
-
-	if httpResp.StatusCode != http.StatusOK {
-		resp.Diagnostics.AddError(
-			"IBM Verify client credentials token failed",
-			fmt.Sprintf("HTTP %d: %s", httpResp.StatusCode, string(body)),
-		)
-		return
-	}
-
-	var result clientCredentialsResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		resp.Diagnostics.AddError("Unable to parse IBM Verify response", err.Error())
+		resp.Diagnostics.AddError("Unable to obtain client credentials token", err.Error())
 		return
 	}
 
