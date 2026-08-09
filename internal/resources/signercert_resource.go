@@ -105,48 +105,6 @@ func (r *SignerCertResource) Schema(
 	}
 }
 
-/*
-// getToken obtains a fresh client credentials access token from IBM Verify.
-func (r *SignerCertResource) getToken(ctx context.Context, tenantURL, clientID, clientSecret string) (string, error) {
-	endpoint := strings.TrimRight(tenantURL, "/") + "/v1.0/endpoint/default/token"
-
-	form := url.Values{}
-	form.Set("grant_type", "client_credentials")
-	form.Set("client_id", clientID)
-	form.Set("client_secret", clientSecret)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBufferString(form.Encode()))
-	if err != nil {
-		return "", fmt.Errorf("create token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("send token request: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token request failed HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("decode token response: %w", err)
-	}
-	if result.AccessToken == "" {
-		return "", fmt.Errorf("token response contained no access_token")
-	}
-	return result.AccessToken, nil
-}
-
-*/
-
 func (r *SignerCertResource) getToken(ctx context.Context, tenantURL, clientID, clientSecret string) (string, error) {
 	result, err := verifyclient.GetClientCredentialsToken(ctx, verifyclient.ClientCredentialsRequest{
 		TenantURL:    tenantURL,
