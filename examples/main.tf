@@ -31,13 +31,15 @@ module "certificate" {
 }
 
 # ---------------------------------------------------------------
-# Resource: signercert
+# Module: signercert
 # Uploads the certificate from the certificate module to IBM Verify.
 # IBM Verify uses this to validate JWT signatures during token exchange.
 # The resource obtains its own client credentials token internally —
 # no access_token needed in config, fully idempotent plans.
 # ---------------------------------------------------------------
-resource "verify_signercert" "this" {
+module "signercert" {
+  source = "../modules/signercert"
+
   tenant_url                 = var.verify_tenant_url
   cert_manager_client_id     = var.cert_manager_client_id
   cert_manager_client_secret = var.cert_manager_client_secret
@@ -59,7 +61,7 @@ module "jwt" {
   key_id          = var.jwt_key_id
   private_key_pem = module.certificate.private_key_pem
 
-  depends_on = [verify_signercert.this]
+  depends_on = [module.signercert]
 }
 
 # ---------------------------------------------------------------
@@ -236,4 +238,3 @@ output "introspected_preferred_username" {
 output "introspected_expires_at" {
   value = module.introspection.expires_at
 }
-

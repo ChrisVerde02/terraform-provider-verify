@@ -130,6 +130,14 @@ Inputs: `tenant_url`, `client_id`, `client_secret`, `subject_token`, `subject_to
 
 Outputs: `access_token`, `expires_in`, `expires_at`, `grant_id`, `issued_token_type`, `token_type`, `scope`
 
+### `modules/signercert`
+
+Wraps `verify_signercert`. Uploads the certificate to IBM Verify and manages its lifecycle. Obtains its own client credentials token internally — stale certs (mismatched key pair) are automatically replaced on the next apply.
+
+Inputs: `tenant_url`, `cert_manager_client_id`, `cert_manager_client_secret`, `certificate_pem`, `label`
+
+Outputs: `label`
+
 ### `modules/introspection`
 
 Wraps `data.verify_token_introspection`. Confirms the access token is live and returns user metadata. Re-evaluated on every plan/apply.
@@ -141,13 +149,11 @@ Outputs: `active`, `subject`, `preferred_username`, `username`, `name`, `given_n
 
 ## Quick start
 
-### 1. Create the `examples2/` directory
+### 1. Create `examples/terraform.tfvars`
 
-```bash
-mkdir examples2
-```
+The `examples/` directory already contains `main.tf`. You only need to create a `terraform.tfvars` file with your credentials — it is git-ignored and never committed.
 
-### 2. Create `examples2/main.tf`
+### 2. Create `examples/main.tf`
 
 ```hcl
 terraform {
@@ -209,7 +215,7 @@ module "jwt" {
   key_id          = var.jwt_key_id
   private_key_pem = module.certificate.private_key_pem
 
-  depends_on = [verify_signercert.this]
+  depends_on = [module.signercert]
 }
 
 # ---------------------------------------------------------------
@@ -377,7 +383,7 @@ output "introspected_expires_at" {
 }
 ```
 
-### 3. Create `examples2/terraform.tfvars`
+### 3. Create `examples/terraform.tfvars`
 
 ```hcl
 # IBM Verify tenant URL
@@ -417,7 +423,7 @@ subject_token_type = "urn:demo:token-type:user-jwt"
 ### 4. Initialise and apply
 
 ```bash
-cd examples2
+cd examples
 terraform init
 terraform apply
 ```
