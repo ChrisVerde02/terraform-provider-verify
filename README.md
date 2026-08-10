@@ -25,7 +25,7 @@ All steps run automatically on `terraform apply`. On subsequent runs, Terraform 
 ## Provider version
 
 ```
-ChrisVerde02/verify ~> 0.4.1
+ChrisVerde02/verify ~> 0.4.3
 ```
 
 Published at: https://registry.terraform.io/providers/ChrisVerde02/verify
@@ -101,6 +101,43 @@ terraform-provider-verify/
 
 > `examples2/` is git-ignored because it contains `terraform.tfvars` with real credentials. The full content is shown in this README.
 
+## Modules
+
+The `modules/` directory contains reusable Terraform modules that wrap the provider resources. Each module is a thin wrapper — it declares the resource and exposes its outputs so you can compose them in any root configuration without repeating boilerplate.
+
+### `modules/certificate`
+
+Wraps `verify_certificate` and two `local` file writes. Generates the RSA key pair and self-signed cert, then writes `cert.pem` and `key.pem` to disk.
+
+Inputs: `common_name`, `organization`, `country`, `validity_days`, `key_size`, `certificate_output_path`, `private_key_output_path`
+
+Outputs: `certificate_pem`, `private_key_pem`, `certificate_path`, `private_key_path`
+
+### `modules/jwt`
+
+Wraps `verify_jwt`. Signs an RS256 JWT using the private key from the certificate module.
+
+Inputs: `issuer`, `subject`, `key_id`, `private_key_pem`, `expires_in_seconds` (default 900)
+
+Outputs: `token`, `issued_at`, `expires_at`
+
+### `modules/token_exchange`
+
+Wraps `verify_token_exchange`. Exchanges a signed JWT for an IBM Verify access token using RFC 8693.
+
+Inputs: `tenant_url`, `client_id`, `client_secret`, `subject_token`, `subject_token_type`
+
+Outputs: `access_token`, `expires_in`, `expires_at`, `grant_id`, `issued_token_type`, `token_type`, `scope`
+
+### `modules/introspection`
+
+Wraps `data.verify_token_introspection`. Confirms the access token is live and returns user metadata. Re-evaluated on every plan/apply.
+
+Inputs: `tenant_url`, `client_id`, `client_secret`, `token`
+
+Outputs: `active`, `subject`, `preferred_username`, `username`, `name`, `given_name`, `scope`, `expires_at`
+
+
 ## Quick start
 
 ### 1. Create the `examples2/` directory
@@ -116,7 +153,7 @@ terraform {
   required_providers {
     verify = {
       source  = "ChrisVerde02/verify"
-      version = "0.4.1"
+      version = "0.4.3"
     }
   }
 }
