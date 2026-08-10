@@ -25,7 +25,7 @@ All steps run automatically on `terraform apply`. On subsequent runs, Terraform 
 ## Provider version
 
 ```
-ChrisVerde02/verify ~> 0.4.3
+ChrisVerde02/verify ~> 0.4.4
 ```
 
 Published at: https://registry.terraform.io/providers/ChrisVerde02/verify
@@ -91,6 +91,7 @@ terraform-provider-verify/
 │       └── token_introspection_data_source.go
 ├── modules/
 │   ├── certificate/     # Wraps verify_certificate + local file writes
+│   ├── signercert/      # Wraps verify_signercert
 │   ├── jwt/             # Wraps verify_jwt
 │   ├── token_exchange/  # Wraps verify_token_exchange
 │   └── introspection/   # Wraps verify_token_introspection data source
@@ -153,7 +154,7 @@ terraform {
   required_providers {
     verify = {
       source  = "ChrisVerde02/verify"
-      version = "0.4.3"
+      version = "0.4.4"
     }
   }
 }
@@ -180,12 +181,14 @@ module "certificate" {
 }
 
 # ---------------------------------------------------------------
-# Resource: signercert
+# Module: signercert
 # Uploads the certificate to IBM Verify so it can validate JWT
 # signatures during token exchange. Obtains its own client
 # credentials token internally — no access_token in config.
 # ---------------------------------------------------------------
-resource "verify_signercert" "this" {
+module "signercert" {
+  source = "../modules/signercert"
+
   tenant_url                 = var.verify_tenant_url
   cert_manager_client_id     = var.cert_manager_client_id
   cert_manager_client_secret = var.cert_manager_client_secret

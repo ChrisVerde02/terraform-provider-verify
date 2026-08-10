@@ -1,7 +1,10 @@
 package resources
 
 import (
+	"bytes"
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 
 	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
 
@@ -11,6 +14,30 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+// certDER decodes a PEM certificate string and returns the raw DER bytes.
+// Returns nil if the PEM is empty or cannot be decoded.
+func certDER(pemStr string) []byte {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return nil
+	}
+	// Validate it parses as a certificate (catches garbage data).
+	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+		return nil
+	}
+	return block.Bytes
+}
+
+// certPEMsMatch returns true when both PEM strings encode the same certificate.
+func certPEMsMatch(a, b string) bool {
+	da := certDER(a)
+	db := certDER(b)
+	if da == nil || db == nil {
+		return false
+	}
+	return bytes.Equal(da, db)
+}
 
 var _ resource.Resource = &SignerCertResource{}
 
@@ -118,9 +145,12 @@ func (r *SignerCertResource) getToken(ctx context.Context, tenantURL, clientID, 
 }
 
 // Create uploads the certificate to IBM Verify.
-// If a certificate with the same label already exists (e.g. state was wiped
-// without running terraform destroy), it is adopted into state rather than
-// failing — so you never need to manually delete the cert from IBM Verify.
+// If a certificate with the same label already exists and its content matches
+// the desired cert (e.g. state was wiped without terraform destroy), it is
+// adopted into state — no upload needed.
+// If a cert with the same label exists but has DIFFERENT content (stale cert
+// from a previous key pair), it is deleted and replaced with the correct one.
+// This prevents CSIAQ5212E token integrity failures caused by cert/key mismatches.
 func (r *SignerCertResource) Create(
 	ctx context.Context,
 	req resource.CreateRequest,
@@ -142,9 +172,7 @@ func (r *SignerCertResource) Create(
 		return
 	}
 
-	// Check whether the cert already exists in IBM Verify before uploading.
-	// This handles the case where terraform.tfstate was wiped without running
-	// terraform destroy — the cert is already there, so we just adopt it.
+	// Check whether a cert with this label already exists in IBM Verify.
 	existing, err := verifyclient.GetSignerCert(ctx,
 		plan.TenantURL.ValueString(),
 		plan.Label.ValueString(),
@@ -155,21 +183,36 @@ func (r *SignerCertResource) Create(
 		return
 	}
 
-	if existing == nil {
-		// Cert does not exist — upload it normally.
-		err = verifyclient.ImportSignerCert(ctx, verifyclient.SignerCertRequest{
-			TenantURL:      plan.TenantURL.ValueString(),
-			AccessToken:    token,
-			CertificatePEM: plan.CertificatePEM.ValueString(),
-			Label:          plan.Label.ValueString(),
-		})
-		if err != nil {
-			resp.Diagnostics.AddError("Unable to upload signer certificate to IBM Verify", err.Error())
+	if existing != nil && certPEMsMatch(existing.Cert, plan.CertificatePEM.ValueString()) {
+		// Cert already exists and matches — adopt into state, no upload needed.
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
+
+	if existing != nil {
+		// Stale cert with matching label but different content — delete it first
+		// so we can upload the correct one. This fixes CSIAQ5212E which occurs
+		// when IBM Verify holds a cert from a previous key pair.
+		if err = verifyclient.DeleteSignerCert(ctx,
+			plan.TenantURL.ValueString(),
+			plan.Label.ValueString(),
+			token,
+		); err != nil {
+			resp.Diagnostics.AddError("Unable to replace stale signer certificate in IBM Verify", err.Error())
 			return
 		}
 	}
-	// If existing != nil, the cert is already in IBM Verify — adopt it into
-	// state silently. No upload needed.
+
+	// Upload the correct cert (fresh create or after deleting stale one).
+	if err = verifyclient.ImportSignerCert(ctx, verifyclient.SignerCertRequest{
+		TenantURL:      plan.TenantURL.ValueString(),
+		AccessToken:    token,
+		CertificatePEM: plan.CertificatePEM.ValueString(),
+		Label:          plan.Label.ValueString(),
+	}); err != nil {
+		resp.Diagnostics.AddError("Unable to upload signer certificate to IBM Verify", err.Error())
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -208,7 +251,15 @@ func (r *SignerCertResource) Read(
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	// Certificate still exists — keep state as-is.
+
+	if !certPEMsMatch(result.Cert, state.CertificatePEM.ValueString()) {
+		// Cert exists in IBM Verify but has different content (stale key pair).
+		// Remove from state so Terraform recreates it on the next apply,
+		// which will trigger Create → delete stale + upload correct cert.
+		resp.State.RemoveResource(ctx)
+		return
+	}
+	// Certificate exists and matches — keep state as-is.
 }
 
 // Update is never called — all fields use RequiresReplace.
