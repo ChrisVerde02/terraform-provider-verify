@@ -1,15 +1,19 @@
 terraform {
   required_providers {
     verify = {
-      # Uses the published provider from the Terraform Registry.
-      # No go build, no ~/.terraformrc override needed.
       source  = "ChrisVerde02/verify"
-      version = "0.4.4"
+      version = "0.4.5"
     }
   }
 }
 
-provider "verify" {}
+provider "verify" {
+  tenant_url                 = var.verify_tenant_url
+  sts_client_id              = var.sts_client_id
+  sts_client_secret          = var.sts_client_secret
+  cert_manager_client_id     = var.cert_manager_client_id
+  cert_manager_client_secret = var.cert_manager_client_secret
+}
 
 # ---------------------------------------------------------------
 # Module: certificate
@@ -40,11 +44,9 @@ module "certificate" {
 module "signercert" {
   source = "../modules/signercert"
 
-  tenant_url                 = var.verify_tenant_url
-  cert_manager_client_id     = var.cert_manager_client_id
-  cert_manager_client_secret = var.cert_manager_client_secret
-  certificate_pem            = module.certificate.certificate_pem
-  label                      = var.jwt_key_id
+  tenant_url      = var.verify_tenant_url
+  certificate_pem = module.certificate.certificate_pem
+  label           = var.jwt_key_id
 }
 
 # ---------------------------------------------------------------

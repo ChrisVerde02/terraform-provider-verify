@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 
 	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
 
@@ -40,13 +41,19 @@ func certPEMsMatch(a, b string) bool {
 }
 
 var _ resource.Resource = &SignerCertResource{}
+var _ resource.ResourceWithConfigure = &SignerCertResource{}
 
 // SignerCertResource implements the verify_signercert resource.
 // It uploads a PEM certificate to IBM Verify as a signer certificate,
 // which IBM Verify uses to validate JWT signatures during token exchange.
-// The resource obtains its own client credentials token internally so
-// access_token never needs to be stored in state or diffed.
-type SignerCertResource struct{}
+//
+// The resource prefers the CertClient injected by the provider Configure().
+// If no provider client is available it falls back to the per-resource
+// cert_manager_client_id / cert_manager_client_secret fields.
+type SignerCertResource struct {
+	// certClient is injected by the provider — nil if provider block omits cert creds.
+	certClient *verifyclient.Client
+}
 
 // SignerCertStateModel is stored in and read from Terraform state.
 type SignerCertStateModel struct {
@@ -132,16 +139,39 @@ func (r *SignerCertResource) Schema(
 	}
 }
 
-func (r *SignerCertResource) getToken(ctx context.Context, tenantURL, clientID, clientSecret string) (string, error) {
-	result, err := verifyclient.GetClientCredentialsToken(ctx, verifyclient.ClientCredentialsRequest{
-		TenantURL:    tenantURL,
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-	})
-	if err != nil {
-		return "", err
+// Configure receives the ProviderData and extracts the CertClient.
+func (r *SignerCertResource) Configure(
+	ctx context.Context,
+	req resource.ConfigureRequest,
+	resp *resource.ConfigureResponse,
+) {
+	if req.ProviderData == nil {
+		return
 	}
-	return result.AccessToken, nil
+	pd, ok := req.ProviderData.(interface{ GetCertClient() *verifyclient.Client })
+	if ok {
+		r.certClient = pd.GetCertClient()
+	}
+}
+
+// certClientFor returns the SDK Client to use for cert operations.
+// Priority: provider-injected client > per-resource credentials.
+func (r *SignerCertResource) certClientFor(
+	ctx context.Context,
+	tenantURL, clientID, clientSecret string,
+) (*verifyclient.Client, error) {
+	if r.certClient != nil {
+		return r.certClient, nil
+	}
+	if clientID == "" || clientSecret == "" {
+		return nil, fmt.Errorf(
+			"cert-manager credentials missing: set cert_manager_client_id / " +
+				"cert_manager_client_secret in the resource, or configure " +
+				"cert_manager_client_id / cert_manager_client_secret in the provider block")
+	}
+	return verifyclient.New(tenantURL,
+		verifyclient.WithClientCredentials(clientID, clientSecret),
+	)
 }
 
 // Create uploads the certificate to IBM Verify.
@@ -162,54 +192,35 @@ func (r *SignerCertResource) Create(
 		return
 	}
 
-	token, err := r.getToken(ctx,
+	c, err := r.certClientFor(ctx,
 		plan.TenantURL.ValueString(),
 		plan.CertManagerClientID.ValueString(),
 		plan.CertManagerClientSecret.ValueString(),
 	)
 	if err != nil {
-		resp.Diagnostics.AddError("Unable to get cert-manager token", err.Error())
+		resp.Diagnostics.AddError("Unable to build cert-manager client", err.Error())
 		return
 	}
 
-	// Check whether a cert with this label already exists in IBM Verify.
-	existing, err := verifyclient.GetSignerCert(ctx,
-		plan.TenantURL.ValueString(),
-		plan.Label.ValueString(),
-		token,
-	)
+	existing, err := c.Certs.Get(ctx, plan.Label.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to check existing signer certificate", err.Error())
 		return
 	}
 
 	if existing != nil && certPEMsMatch(existing.Cert, plan.CertificatePEM.ValueString()) {
-		// Cert already exists and matches — adopt into state, no upload needed.
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
 
 	if existing != nil {
-		// Stale cert with matching label but different content — delete it first
-		// so we can upload the correct one. This fixes CSIAQ5212E which occurs
-		// when IBM Verify holds a cert from a previous key pair.
-		if err = verifyclient.DeleteSignerCert(ctx,
-			plan.TenantURL.ValueString(),
-			plan.Label.ValueString(),
-			token,
-		); err != nil {
+		if err = c.Certs.Delete(ctx, plan.Label.ValueString()); err != nil {
 			resp.Diagnostics.AddError("Unable to replace stale signer certificate in IBM Verify", err.Error())
 			return
 		}
 	}
 
-	// Upload the correct cert (fresh create or after deleting stale one).
-	if err = verifyclient.ImportSignerCert(ctx, verifyclient.SignerCertRequest{
-		TenantURL:      plan.TenantURL.ValueString(),
-		AccessToken:    token,
-		CertificatePEM: plan.CertificatePEM.ValueString(),
-		Label:          plan.Label.ValueString(),
-	}); err != nil {
+	if err = c.Certs.Import(ctx, plan.Label.ValueString(), plan.CertificatePEM.ValueString()); err != nil {
 		resp.Diagnostics.AddError("Unable to upload signer certificate to IBM Verify", err.Error())
 		return
 	}
@@ -230,17 +241,17 @@ func (r *SignerCertResource) Read(
 		return
 	}
 
-	token, err := r.getToken(ctx,
+	c, err := r.certClientFor(ctx,
 		state.TenantURL.ValueString(),
 		state.CertManagerClientID.ValueString(),
 		state.CertManagerClientSecret.ValueString(),
 	)
 	if err != nil {
-		resp.Diagnostics.AddError("Unable to get cert-manager token for Read", err.Error())
+		resp.Diagnostics.AddError("Unable to build cert-manager client for Read", err.Error())
 		return
 	}
 
-	result, err := verifyclient.GetSignerCert(ctx, state.TenantURL.ValueString(), state.Label.ValueString(), token)
+	result, err := c.Certs.Get(ctx, state.Label.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to read signer certificate from IBM Verify", err.Error())
 		return
@@ -282,18 +293,17 @@ func (r *SignerCertResource) Delete(
 		return
 	}
 
-	token, err := r.getToken(ctx,
+	c, err := r.certClientFor(ctx,
 		state.TenantURL.ValueString(),
 		state.CertManagerClientID.ValueString(),
 		state.CertManagerClientSecret.ValueString(),
 	)
 	if err != nil {
-		resp.Diagnostics.AddError("Unable to get cert-manager token for Delete", err.Error())
+		resp.Diagnostics.AddError("Unable to build cert-manager client for Delete", err.Error())
 		return
 	}
 
-	err = verifyclient.DeleteSignerCert(ctx, state.TenantURL.ValueString(), state.Label.ValueString(), token)
-	if err != nil {
+	if err = c.Certs.Delete(ctx, state.Label.ValueString()); err != nil {
 		resp.Diagnostics.AddError("Unable to delete signer certificate from IBM Verify", err.Error())
 		return
 	}

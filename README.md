@@ -25,7 +25,7 @@ All steps run automatically on `terraform apply`. On subsequent runs, Terraform 
 ## Provider version
 
 ```
-ChrisVerde02/verify ~> 0.4.4
+ChrisVerde02/verify ~> 0.4.5
 ```
 
 Published at: https://registry.terraform.io/providers/ChrisVerde02/verify
@@ -160,7 +160,7 @@ terraform {
   required_providers {
     verify = {
       source  = "ChrisVerde02/verify"
-      version = "0.4.4"
+      version = "0.4.5"
     }
   }
 }

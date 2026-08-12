@@ -2,6 +2,9 @@ package provider
 
 import (
 	"context"
+	"os"
+
+	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
 
 	"github.com/Christian-Verderame/terraform-provider-verify/internal/datasources"
 	"github.com/Christian-Verderame/terraform-provider-verify/internal/resources"
@@ -10,7 +13,26 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+// ProviderData is passed to every resource and data source via Configure().
+// It carries pre-built SDK clients so resources never handle credentials directly.
+type ProviderData struct {
+	// STSClient is configured with the STS client credentials and is used for
+	// token exchange and introspection operations.
+	STSClient *verifyclient.Client
+
+	// CertClient is configured with the cert-manager client credentials and is
+	// used for signer certificate management operations.
+	CertClient *verifyclient.Client
+}
+
+// GetSTSClient returns the STS SDK client. May be nil if not configured.
+func (pd *ProviderData) GetSTSClient() *verifyclient.Client { return pd.STSClient }
+
+// GetCertClient returns the cert-manager SDK client. May be nil if not configured.
+func (pd *ProviderData) GetCertClient() *verifyclient.Client { return pd.CertClient }
 
 // VerifyProvider defines our Terraform provider.
 type VerifyProvider struct{}
@@ -29,31 +51,128 @@ func (p *VerifyProvider) Metadata(
 	resp.TypeName = "verify"
 }
 
-// Schema defines configuration fields for the provider.
-//
-// It is empty for now. Later, we will add settings such as:
-// - tenant_url
-// - client_id
-// - client_secret
+// verifyProviderModel maps the provider schema to Go types.
+type verifyProviderModel struct {
+	TenantURL               types.String `tfsdk:"tenant_url"`
+	STSClientID             types.String `tfsdk:"sts_client_id"`
+	STSClientSecret         types.String `tfsdk:"sts_client_secret"`
+	CertManagerClientID     types.String `tfsdk:"cert_manager_client_id"`
+	CertManagerClientSecret types.String `tfsdk:"cert_manager_client_secret"`
+}
+
+// Schema defines provider-level configuration attributes.
+// All attributes are optional — values can also be supplied via environment
+// variables (VERIFY_TENANT_URL, VERIFY_STS_CLIENT_ID, etc.).
 func (p *VerifyProvider) Schema(
 	ctx context.Context,
 	req provider.SchemaRequest,
 	resp *provider.SchemaResponse,
 ) {
 	resp.Schema = schema.Schema{
-		Attributes: map[string]schema.Attribute{},
+		Description: "The IBM Verify provider manages IBM Verify resources including " +
+			"signer certificates, JWTs, and token exchange. Credentials can be " +
+			"supplied in the provider block or via environment variables.",
+
+		Attributes: map[string]schema.Attribute{
+			"tenant_url": schema.StringAttribute{
+				Description: "IBM Verify tenant base URL, e.g. https://example.verify.ibm.com. " +
+					"Can also be set with the VERIFY_TENANT_URL environment variable.",
+				Optional: true,
+			},
+			"sts_client_id": schema.StringAttribute{
+				Description: "Client ID of the STS API client used for token exchange and " +
+					"introspection. Can also be set with VERIFY_STS_CLIENT_ID.",
+				Optional: true,
+			},
+			"sts_client_secret": schema.StringAttribute{
+				Description: "Client secret of the STS API client. " +
+					"Can also be set with VERIFY_STS_CLIENT_SECRET.",
+				Optional:  true,
+				Sensitive: true,
+			},
+			"cert_manager_client_id": schema.StringAttribute{
+				Description: "Client ID of the cert-manager API client used for signer " +
+					"certificate management. Can also be set with VERIFY_CERT_MANAGER_CLIENT_ID.",
+				Optional: true,
+			},
+			"cert_manager_client_secret": schema.StringAttribute{
+				Description: "Client secret of the cert-manager API client. " +
+					"Can also be set with VERIFY_CERT_MANAGER_CLIENT_SECRET.",
+				Optional:  true,
+				Sensitive: true,
+			},
+		},
 	}
 }
 
-// Configure runs after Terraform reads the provider configuration.
-//
-// Later, this method will create the IBM Verify HTTP client and make it
-// available to all resources and data sources.
+// Configure runs after Terraform reads the provider block.
+// It builds two SDK clients (STS and cert-manager) and stores them in
+// ProviderData so every resource and data source can use them directly.
 func (p *VerifyProvider) Configure(
 	ctx context.Context,
 	req provider.ConfigureRequest,
 	resp *provider.ConfigureResponse,
 ) {
+	var config verifyProviderModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Resolve each value: provider block → environment variable.
+	tenantURL := resolveValue(config.TenantURL, "VERIFY_TENANT_URL")
+	stsClientID := resolveValue(config.STSClientID, "VERIFY_STS_CLIENT_ID")
+	stsClientSecret := resolveValue(config.STSClientSecret, "VERIFY_STS_CLIENT_SECRET")
+	certClientID := resolveValue(config.CertManagerClientID, "VERIFY_CERT_MANAGER_CLIENT_ID")
+	certClientSecret := resolveValue(config.CertManagerClientSecret, "VERIFY_CERT_MANAGER_CLIENT_SECRET")
+
+	// tenantURL is required for any API operation.
+	if tenantURL == "" {
+		resp.Diagnostics.AddError(
+			"Missing IBM Verify tenant URL",
+			"Set tenant_url in the provider block or the VERIFY_TENANT_URL environment variable.",
+		)
+		return
+	}
+
+	pd := &ProviderData{}
+
+	// Build the STS client if credentials are present.
+	if stsClientID != "" && stsClientSecret != "" {
+		c, err := verifyclient.New(tenantURL,
+			verifyclient.WithClientCredentials(stsClientID, stsClientSecret),
+		)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to create STS client", err.Error())
+			return
+		}
+		pd.STSClient = c
+	}
+
+	// Build the cert-manager client if credentials are present.
+	if certClientID != "" && certClientSecret != "" {
+		c, err := verifyclient.New(tenantURL,
+			verifyclient.WithClientCredentials(certClientID, certClientSecret),
+		)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to create cert-manager client", err.Error())
+			return
+		}
+		pd.CertClient = c
+	}
+
+	// Make ProviderData available to all resources and data sources.
+	resp.ResourceData = pd
+	resp.DataSourceData = pd
+}
+
+// resolveValue returns the string value from a Terraform attribute if set,
+// otherwise falls back to the named environment variable.
+func resolveValue(attr types.String, envVar string) string {
+	if !attr.IsNull() && !attr.IsUnknown() && attr.ValueString() != "" {
+		return attr.ValueString()
+	}
+	return os.Getenv(envVar)
 }
 
 // Resources returns the resources supported by this provider.
@@ -64,11 +183,7 @@ func (p *VerifyProvider) Resources(
 		resources.NewCertificateResource,
 		resources.NewJWTResource,
 		resources.NewTokenExchangeResource,
-		// SignerCert uploads a PEM certificate to IBM Verify so it can
-		// validate JWT signatures during token exchange.
 		resources.NewSignerCertResource,
-		// TokenIntrospection is intentionally a data source, not a resource.
-		// See internal/datasources/token_introspection_data_source.go.
 	}
 }
 
@@ -77,21 +192,9 @@ func (p *VerifyProvider) DataSources(
 	ctx context.Context,
 ) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		// JWT — generates a fresh signed JWT on every plan/apply.
-		// Preferred over the verify_jwt resource for idempotent workflows.
 		datasources.NewJWTDataSource,
-		// TokenExchange — calls IBM Verify on every plan/apply.
-		// Preferred over the verify_token_exchange resource so the access
-		// token is never served from stale Terraform state.
 		datasources.NewTokenExchangeDataSource,
-		// Introspection is a data source so Terraform re-evaluates it on
-		// every plan/apply, always reflecting the live token status.
 		datasources.NewTokenIntrospectionDataSource,
-		// ClientCredentialsToken — obtains an access token using the OAuth 2.0
-		// client credentials grant. The token carries the API client's own
-		// entitlements directly, with no user impersonation. Used to call
-		// IBM Verify admin APIs (e.g. signer cert upload) from an API client
-		// that has the required entitlements.
 		datasources.NewClientCredentialsTokenDataSource,
 	}
 }
