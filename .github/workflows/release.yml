@@ -1,56 +1,38 @@
-# GitHub Actions workflow — triggered when a version tag (e.g. v0.1.0) is pushed.
-# It builds the provider for all platforms, signs the release, and publishes it
-# to GitHub Releases so the Terraform Registry can pick it up.
 name: Release
 
 on:
   push:
     tags:
-      # Only run on version tags — e.g. v0.1.0, v1.2.3
       - "v*"
 
 permissions:
   contents: write
 
 jobs:
-  goreleaser:
+  release:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          # Full git history is needed for goreleaser to generate the changelog.
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Import GPG key
-        # The GPG private key is stored as a GitHub Secret (GPG_PRIVATE_KEY).
-        # It is imported here so goreleaser can sign the checksum file.
-        id: import_gpg
         uses: crazy-max/ghaction-import-gpg@v6
+        id: import_gpg
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.PASSPHRASE }}
 
       - name: Run GoReleaser
-        # GoReleaser builds all binaries, creates zips, signs the checksum,
-        # and publishes the GitHub Release in one step.
         uses: goreleaser/goreleaser-action@v6
         with:
-          distribution: goreleaser
           version: "~> v2"
           args: release --clean
         env:
-          # GITHUB_TOKEN is provided automatically by GitHub Actions.
-          # It is used to create the GitHub Release.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GPG_FINGERPRINT is set by the import-gpg step above.
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
-          # PASSPHRASE is the passphrase for the GPG key — stored as a secret.
-          PASSPHRASE: ${{ secrets.PASSPHRASE }}
