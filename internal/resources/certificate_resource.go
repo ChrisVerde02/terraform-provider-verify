@@ -60,9 +60,11 @@ func (r *CertificateResource) Schema(
 	resp *resource.SchemaResponse,
 ) {
 	resp.Schema = schema.Schema{
-		Description: "Generates a self-signed X.509 certificate. " +
-			"The certificate is reused across plans until it expires, " +
-			"then automatically regenerated.",
+		Description: "Generates a self-signed X.509 certificate and RSA private key. " +
+			"The certificate and key are stored in Terraform state and reused across plans. " +
+			"Refresh policy: on each plan/apply the resource checks the certificate expiry. " +
+			"If fewer than 24 hours remain before the NotAfter date, a new key pair and " +
+			"certificate are generated automatically — no manual rotation needed.",
 
 		Attributes: map[string]schema.Attribute{
 
@@ -134,8 +136,9 @@ func (r *CertificateResource) Schema(
 
 			"expires_at": schema.Int64Attribute{
 				Description: "Certificate expiry as a Unix timestamp (NotAfter). " +
-					"The resource regenerates the certificate automatically when " +
-					"this timestamp is within 24 hours of the current time.",
+					"Refresh policy: the resource regenerates the certificate and key pair " +
+					"automatically when fewer than 24 hours remain before this timestamp. " +
+					"The threshold is not configurable.",
 				Computed: true,
 			},
 		},

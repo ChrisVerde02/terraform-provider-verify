@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
@@ -67,8 +68,11 @@ func (r *TokenExchangeResource) Schema(
 ) {
 	resp.Schema = schema.Schema{
 		Description: "Exchanges a custom JWT for an IBM Verify access token. " +
-			"The access token is reused across plans until it expires, then " +
-			"automatically re-exchanged.",
+			"The access token is stored in state and reused across plans. " +
+			"On each plan/apply, if the token is within 60 seconds of expiry it is " +
+			"automatically re-exchanged — no manual rotation needed. " +
+			"Prefer the data.verify_token_exchange data source for stateless workflows " +
+			"where a fresh token on every apply is acceptable.",
 
 		Attributes: map[string]schema.Attribute{
 			"tenant_url": schema.StringAttribute{
@@ -139,8 +143,10 @@ func (r *TokenExchangeResource) Schema(
 
 			"expires_at": schema.Int64Attribute{
 				Description: "Access-token expiry as a Unix timestamp. " +
-					"The resource re-exchanges automatically when this timestamp " +
-					"is within 60 seconds of the current time.",
+					"Refresh policy: the resource automatically re-exchanges the token " +
+					"when fewer than 60 seconds remain before expiry. " +
+					"The threshold is not configurable; use data.verify_token_exchange " +
+					"for a fresh token on every apply.",
 				Computed: true,
 			},
 
@@ -245,10 +251,19 @@ func (r *TokenExchangeResource) Create(
 }
 
 // Read checks whether the stored access token has expired.
-// If it is still valid (more than 60 seconds from expiry) the existing state
-// is kept unchanged — no API call is made to IBM Verify.
-// If it has expired (or is within 60 seconds of expiry) a fresh token is
-// obtained by re-exchanging with IBM Verify.
+//
+// Refresh policy: if the token is still valid (more than 60 seconds from
+// expiry) the existing state is kept — no API call is made.
+// If the token is within 60 seconds of expiry, a fresh token is obtained
+// by re-exchanging with IBM Verify.
+//
+// On re-exchange failure the behaviour depends on the error type:
+//   - HTTP 404 (grant revoked/not found): resource is removed from state so
+//     Terraform recreates it cleanly on the next apply.
+//   - All other errors (auth failure, bad request, network, 5xx): an error
+//     diagnostic is emitted and state is preserved. The existing (possibly
+//     expired) token remains in state so the failure is visible to the user
+//     rather than silently disappearing.
 func (r *TokenExchangeResource) Read(
 	ctx context.Context,
 	req resource.ReadRequest,
@@ -269,12 +284,27 @@ func (r *TokenExchangeResource) Read(
 		return
 	}
 
-	// Token has expired or is about to — re-exchange for a fresh one.
-	// If re-exchange fails (e.g. the subject JWT has also expired), remove
-	// this resource from state so Terraform recreates it cleanly on the next
-	// apply rather than surfacing a confusing mid-plan error.
+	// Token has expired or is about to — attempt re-exchange.
 	if err := exchange(ctx, &state); err != nil {
-		resp.State.RemoveResource(ctx)
+		errMsg := err.Error()
+
+		// HTTP 404 means the grant has been revoked or deleted in IBM Verify.
+		// Remove from state so Terraform recreates the resource on the next apply.
+		if strings.Contains(errMsg, "HTTP 404") {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+
+		// All other failures (401, 400, 5xx, network errors) — emit a visible
+		// error diagnostic and preserve state. The user sees exactly what went
+		// wrong rather than the resource silently disappearing from state.
+		resp.Diagnostics.AddError(
+			"Unable to re-exchange token",
+			"The access token has expired and automatic re-exchange failed. "+
+				"Run 'terraform apply' once the underlying issue is resolved "+
+				"(e.g. ensure the subject JWT is valid and IBM Verify is reachable). "+
+				"Error: "+errMsg,
+		)
 		return
 	}
 

@@ -60,8 +60,12 @@ func (r *JWTResource) Schema(
 ) {
 	resp.Schema = schema.Schema{
 		Description: "Generates an RS256-signed JWT using an RSA private key. " +
-			"The JWT is reused across plans until it expires, then automatically " +
-			"regenerated with a fresh jti claim.",
+			"The JWT is stored in state and reused across plans. " +
+			"Refresh policy: on each plan/apply the resource checks the token expiry. " +
+			"If fewer than 60 seconds remain, a new JWT is signed with a fresh jti claim " +
+			"automatically — preventing IBM Verify replay rejection (CSIAQ5206E). " +
+			"The threshold is not configurable; use data.verify_jwt for a fresh JWT " +
+			"on every apply.",
 
 		Attributes: map[string]schema.Attribute{
 			"issuer": schema.StringAttribute{
@@ -131,8 +135,9 @@ func (r *JWTResource) Schema(
 
 			"expires_at": schema.Int64Attribute{
 				Description: "JWT exp value as a Unix timestamp. " +
-					"The resource regenerates the JWT automatically when " +
-					"this timestamp is within 60 seconds of the current time.",
+					"Refresh policy: the resource regenerates the JWT with a fresh jti " +
+					"automatically when fewer than 60 seconds remain before this timestamp. " +
+					"The threshold is not configurable.",
 				Computed: true,
 			},
 		},
