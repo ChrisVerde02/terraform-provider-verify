@@ -19,6 +19,7 @@ import (
 
 // Ensure the resource satisfies the Terraform interface.
 var _ resource.Resource = &CertificateResource{}
+var _ resource.ResourceWithImportState = &CertificateResource{}
 
 // CertificateResource implements the verify_certificate resource.
 type CertificateResource struct{}
@@ -140,6 +141,25 @@ func (r *CertificateResource) Schema(
 		},
 	}
 }
+
+// ImportState is intentionally unsupported for verify_certificate.
+// This resource generates its key pair and certificate locally — there is
+// no remote counterpart to import. Use data.verify_jwt or
+// data.verify_token_exchange for stateless operations.
+func (r *CertificateResource) ImportState(
+	ctx context.Context,
+	req resource.ImportStateRequest,
+	resp *resource.ImportStateResponse,
+) {
+	resp.Diagnostics.AddError(
+		"Import not supported for verify_certificate",
+		"verify_certificate generates its RSA key pair and certificate locally — "+
+			"there is no remote resource to import. "+
+			"Use the data.verify_jwt or data.verify_token_exchange data sources "+
+			"for stateless operations.",
+	)
+}
+
 
 // Create generates the certificate and stores expiry in state.
 func (r *CertificateResource) Create(

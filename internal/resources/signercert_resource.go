@@ -44,6 +44,7 @@ func certPEMsMatch(a, b string) bool {
 
 var _ resource.Resource = &SignerCertResource{}
 var _ resource.ResourceWithConfigure = &SignerCertResource{}
+var _ resource.ResourceWithImportState = &SignerCertResource{}
 
 // SignerCertResource implements the verify_signercert resource.
 // It uploads a PEM certificate to IBM Verify as a signer certificate,
@@ -295,6 +296,69 @@ func (r *SignerCertResource) Read(
 		return
 	}
 	// Certificate exists and matches — keep state as-is.
+}
+
+// ImportState brings an existing IBM Verify signer certificate under
+// Terraform management. The import ID is the certificate label, e.g.:
+//
+//	terraform import module.signercert.verify_signercert.this demotokensigner
+//
+// The cert is fetched from IBM Verify and its PEM is stored in state.
+// tenant_url is sourced from the provider-configured CertClient.
+// cert_manager_client_id and cert_manager_client_secret are left empty —
+// they will be populated from the provider block on the next plan/apply.
+func (r *SignerCertResource) ImportState(
+	ctx context.Context,
+	req resource.ImportStateRequest,
+	resp *resource.ImportStateResponse,
+) {
+	label := req.ID
+	if label == "" {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			"The import ID must be the signer certificate label, e.g.: "+
+				"terraform import verify_signercert.this demotokensigner",
+		)
+		return
+	}
+
+	if r.certClient == nil {
+		resp.Diagnostics.AddError(
+			"Provider not configured for import",
+			"cert_manager_client_id and cert_manager_client_secret must be set in "+
+				"the provider block before running terraform import on verify_signercert.",
+		)
+		return
+	}
+
+	result, err := r.certClient.Certs.Get(ctx, label)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to fetch signer certificate from IBM Verify",
+			err.Error(),
+		)
+		return
+	}
+	if result == nil {
+		resp.Diagnostics.AddError(
+			"Signer certificate not found",
+			fmt.Sprintf("No signer certificate with label %q exists in IBM Verify. "+
+				"Verify the label and tenant URL in the provider block.", label),
+		)
+		return
+	}
+
+	// Populate state from the fetched cert.
+	// tenant_url comes from the client's configured base URL.
+	state := SignerCertStateModel{
+		TenantURL:               types.StringValue(r.certClient.TenantURL()),
+		CertManagerClientID:     types.StringValue(""),
+		CertManagerClientSecret: types.StringValue(""),
+		CertificatePEM:          types.StringValue(result.Cert),
+		Label:                   types.StringValue(result.Label),
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 // Update is never called — all fields use RequiresReplace.

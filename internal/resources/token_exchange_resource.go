@@ -16,6 +16,7 @@ import (
 )
 
 var _ resource.Resource = &TokenExchangeResource{}
+var _ resource.ResourceWithImportState = &TokenExchangeResource{}
 
 // TokenExchangeResource implements verify_token_exchange.
 type TokenExchangeResource struct{}
@@ -202,6 +203,24 @@ func exchange(
 	state.Scope = types.StringValue(result.Scope)
 	state.TokenType = types.StringValue(result.TokenType)
 	return nil
+}
+
+// ImportState is intentionally unsupported for verify_token_exchange.
+// Token exchange results are ephemeral — the access token expires and is
+// re-exchanged automatically. There is no remote resource to import.
+// Use the data.verify_token_exchange data source for a fresh token on every
+// plan/apply without any state management.
+func (r *TokenExchangeResource) ImportState(
+	ctx context.Context,
+	req resource.ImportStateRequest,
+	resp *resource.ImportStateResponse,
+) {
+	resp.Diagnostics.AddError(
+		"Import not supported for verify_token_exchange",
+		"verify_token_exchange produces an ephemeral access token — there is no "+
+			"remote resource to import. Use the data.verify_token_exchange data source "+
+			"instead for a fresh token on every plan/apply.",
+	)
 }
 
 // Create exchanges the JWT for an IBM Verify access token.

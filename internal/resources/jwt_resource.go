@@ -19,6 +19,7 @@ import (
 )
 
 var _ resource.Resource = &JWTResource{}
+var _ resource.ResourceWithImportState = &JWTResource{}
 
 // JWTResource implements the verify_jwt resource.
 type JWTResource struct{}
@@ -166,6 +167,22 @@ func signJWT(state *JWTResourceModel) error {
 	state.IssuedAt = types.Int64Value(result.IssuedAt)
 	state.ExpiresAt = types.Int64Value(result.ExpiresAt)
 	return nil
+}
+
+// ImportState is intentionally unsupported for verify_jwt.
+// JWTs are signed locally from a private key — there is no remote resource
+// to import. Use the data.verify_jwt data source for a fresh JWT on every
+// plan/apply without any state management.
+func (r *JWTResource) ImportState(
+	ctx context.Context,
+	req resource.ImportStateRequest,
+	resp *resource.ImportStateResponse,
+) {
+	resp.Diagnostics.AddError(
+		"Import not supported for verify_jwt",
+		"verify_jwt signs a JWT locally — there is no remote resource to import. "+
+			"Use the data.verify_jwt data source instead for stateless JWT generation.",
+	)
 }
 
 // Create generates and signs the JWT.
