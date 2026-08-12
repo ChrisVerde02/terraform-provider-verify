@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/ChrisVerde02/ibmverify-go v1.5.0
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
+	github.com/hashicorp/terraform-plugin-framework-validators v0.19.0
 )
 
 require (

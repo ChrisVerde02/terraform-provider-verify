@@ -7,11 +7,14 @@ import (
 
 	providercrypto "github.com/ChrisVerde02/ibmverify-go/crypto"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -79,6 +82,9 @@ func (r *JWTResource) Schema(
 			"key_id": schema.StringAttribute{
 				Description: "JWT kid header matching the IBM Verify certificate label.",
 				Required:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -101,8 +107,11 @@ func (r *JWTResource) Schema(
 			},
 
 			"expires_in_seconds": schema.Int64Attribute{
-				Description: "JWT lifetime in seconds.",
+				Description: "JWT lifetime in seconds. Must be at least 1.",
 				Required:    true,
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.RequiresReplace(),
 				},

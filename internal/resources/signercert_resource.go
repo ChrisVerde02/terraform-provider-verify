@@ -9,10 +9,12 @@ import (
 
 	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -94,8 +96,14 @@ func (r *SignerCertResource) Schema(
 
 		Attributes: map[string]schema.Attribute{
 			"tenant_url": schema.StringAttribute{
-				Description: "IBM Verify tenant base URL.",
+				Description: "IBM Verify tenant base URL, e.g. https://example.verify.ibm.com.",
 				Required:    true,
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(
+						urlRegexp,
+						"must be a valid HTTPS URL, e.g. https://example.verify.ibm.com",
+					),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -103,17 +111,20 @@ func (r *SignerCertResource) Schema(
 
 			"cert_manager_client_id": schema.StringAttribute{
 				Description: "Client ID of the IBM Verify API client with manageCerts entitlement. " +
-					"Used to obtain a client credentials token for all cert operations.",
-				Required: true,
+					"Optional when cert_manager_client_id is configured in the provider block.",
+				Optional: true,
+				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 
 			"cert_manager_client_secret": schema.StringAttribute{
-				Description: "Client secret of the cert-manager API client.",
-				Required:    true,
-				Sensitive:   true,
+				Description: "Client secret of the cert-manager API client. " +
+					"Optional when cert_manager_client_secret is configured in the provider block.",
+				Optional:  true,
+				Computed:  true,
+				Sensitive: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -122,15 +133,28 @@ func (r *SignerCertResource) Schema(
 			"certificate_pem": schema.StringAttribute{
 				Description: "PEM-encoded X.509 certificate to upload.",
 				Required:    true,
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(
+						pemCertRegexp,
+						`must be a PEM certificate beginning with "-----BEGIN CERTIFICATE-----"`,
+					),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 
 			"label": schema.StringAttribute{
-				Description: "Friendly name / alias for the certificate in IBM Verify. " +
-					"Must match the kid header used in the JWT.",
+				Description: "Signer certificate label in IBM Verify. Must match the JWT kid header. " +
+					"IBM Verify lowercases labels on storage — use lowercase. " +
+					"Allowed characters: letters, digits, dots, hyphens, underscores (1–128 chars).",
 				Required: true,
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(
+						labelRegexp,
+						"must contain only letters, digits, dots, hyphens, or underscores (1–128 characters)",
+					),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},

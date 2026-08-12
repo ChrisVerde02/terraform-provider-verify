@@ -1,5 +1,3 @@
-github.com/ChrisVerde02/ibmverify-go v1.4.0 h1:v2tKuHaT2Ec60oaYaOuNLR3NlXEo8upW+yIuf9zqj7E=
-github.com/ChrisVerde02/ibmverify-go v1.4.0/go.mod h1:XnF9NEh6EJSx3xgEEwxsVtvvE0HYBp0JnJbGMZ+LkKo=
 github.com/ChrisVerde02/ibmverify-go v1.5.0 h1:VfenVLNVBs86RuGGuYqx054IuhtaOfJqrURFzzcvc7s=
 github.com/ChrisVerde02/ibmverify-go v1.5.0/go.mod h1:SBFDkeBIWRci5FEhxYoA5FR86Y/fjMGrI5y1dBIemX0=
 github.com/bufbuild/protocompile v0.14.1 h1:iA73zAf/fyljNjQKwYzUHD6AD4R8KMasmwa/FBatYVw=
@@ -33,6 +31,8 @@ github.com/hashicorp/go-uuid v1.0.3 h1:2gKiV6YVmrJ1i2CKKa9obLvRieoRGviZFL26PcT/C
 github.com/hashicorp/go-uuid v1.0.3/go.mod h1:6SBZvOh/SIDV7/2o3Jml5SYk/TvGqwFJ/bN7x4byOro=
 github.com/hashicorp/terraform-plugin-framework v1.19.0 h1:q0bwyhxAOR3vfdgbk9iplv3MlTv/dhBHTXjQOtQDoBA=
 github.com/hashicorp/terraform-plugin-framework v1.19.0/go.mod h1:YRXOBu0jvs7xp4AThBbX4mAzYaMJ1JgtFH//oGKxwLc=
+github.com/hashicorp/terraform-plugin-framework-validators v0.19.0 h1:Zz3iGgzxe/1XBkooZCewS0nJAaCFPFPHdNJd8FgE4Ow=
+github.com/hashicorp/terraform-plugin-framework-validators v0.19.0/go.mod h1:GBKTNGbGVJohU03dZ7U8wHqc2zYnMUawgCN+gC0itLc=
 github.com/hashicorp/terraform-plugin-go v0.31.0 h1:0Fz2r9DQ+kNNl6bx8HRxFd1TfMKUvnrOtvJPmp3Z0q8=
 github.com/hashicorp/terraform-plugin-go v0.31.0/go.mod h1:A88bDhd/cW7FnwqxQRz3slT+QY6yzbHKc6AOTtmdeS8=
 github.com/hashicorp/terraform-plugin-log v0.10.0 h1:eu2kW6/QBVdN4P3Ju2WiB2W3ObjkAsyfBsL3Wh1fj3g=

@@ -6,11 +6,14 @@ import (
 
 	providercrypto "github.com/ChrisVerde02/ibmverify-go/crypto"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -63,35 +66,55 @@ func (r *CertificateResource) Schema(
 		Attributes: map[string]schema.Attribute{
 
 			"common_name": schema.StringAttribute{
-				Required: true,
+				Description: "Certificate Common Name (CN) — also used as the IBM Verify signer cert label.",
+				Required:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 
 			"organization": schema.StringAttribute{
-				Required: true,
+				Description: "Certificate Organization (O) field.",
+				Required:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 
 			"country": schema.StringAttribute{
-				Required: true,
+				Description: "Certificate Country (C) field — must be a two-letter ISO 3166-1 country code.",
+				Required:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthBetween(2, 2),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 
 			"validity_days": schema.Int64Attribute{
-				Required: true,
+				Description: "Certificate validity period in days. Must be at least 1.",
+				Required:    true,
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.RequiresReplace(),
 				},
 			},
 
 			"key_size": schema.Int64Attribute{
-				Required: true,
+				Description: "RSA key size in bits. Must be 2048, 3072, or 4096.",
+				Required:    true,
+				Validators: []validator.Int64{
+					int64validator.OneOf(2048, 3072, 4096),
+				},
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.RequiresReplace(),
 				},
