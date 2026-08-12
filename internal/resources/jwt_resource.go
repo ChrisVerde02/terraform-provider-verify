@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"time"
 
@@ -130,21 +129,12 @@ func (r *JWTResource) Schema(
 	}
 }
 
-// generateJWTID produces a random UUID for use as a jti claim.
-func generateJWTID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
-	}
-	return fmt.Sprintf(
-		"%08x-%04x-%04x-%04x-%12x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:],
-	)
-}
-
 // signJWT is a shared helper used by both Create and Read.
 func signJWT(state *JWTResourceModel) error {
-	jwtID := generateJWTID()
+	jwtID, err := providercrypto.GenerateJTI()
+	if err != nil {
+		return fmt.Errorf("generate JWT ID: %w", err)
+	}
 
 	result, err := providercrypto.GenerateSignedJWT(
 		providercrypto.JWTRequest{

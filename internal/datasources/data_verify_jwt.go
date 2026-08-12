@@ -119,14 +119,18 @@ func (d *JWTDataSource) Read(
 		return
 	}
 
+	jti, err := generateJTI()
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to generate JWT ID", err.Error())
+		return
+	}
+
 	result, err := providercrypto.GenerateSignedJWT(
 		providercrypto.JWTRequest{
 			Issuer:        config.Issuer.ValueString(),
 			Subject:       config.Subject.ValueString(),
 			KeyID:         config.KeyID.ValueString(),
-			// Data sources generate a fresh jti on every read — no external
-			// random_uuid resource is needed.
-			JWTID:         generateJTI(),
+			JWTID:         jti,
 			PrivateKeyPEM: config.PrivateKeyPEM.ValueString(),
 			ExpiresIn: time.Duration(
 				config.ExpiresIn.ValueInt64(),
@@ -134,10 +138,7 @@ func (d *JWTDataSource) Read(
 		},
 	)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to generate JWT",
-			err.Error(),
-		)
+		resp.Diagnostics.AddError("Unable to generate JWT", err.Error())
 		return
 	}
 
