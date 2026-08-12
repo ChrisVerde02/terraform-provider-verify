@@ -18,9 +18,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// certDER decodes a PEM certificate string and returns the raw DER bytes.
+// CertDER decodes a PEM certificate string and returns the raw DER bytes.
 // Returns nil if the PEM is empty or cannot be decoded.
-func certDER(pemStr string) []byte {
+func CertDER(pemStr string) []byte {
 	block, _ := pem.Decode([]byte(pemStr))
 	if block == nil {
 		return nil
@@ -32,10 +32,10 @@ func certDER(pemStr string) []byte {
 	return block.Bytes
 }
 
-// certPEMsMatch returns true when both PEM strings encode the same certificate.
-func certPEMsMatch(a, b string) bool {
-	da := certDER(a)
-	db := certDER(b)
+// CertPEMsMatch returns true when both PEM strings encode the same certificate.
+func CertPEMsMatch(a, b string) bool {
+	da := CertDER(a)
+	db := CertDER(b)
 	if da == nil || db == nil {
 		return false
 	}
@@ -101,7 +101,7 @@ func (r *SignerCertResource) Schema(
 				Required:    true,
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
-						urlRegexp,
+						URLRegexp,
 						"must be a valid HTTPS URL, e.g. https://example.verify.ibm.com",
 					),
 				},
@@ -136,7 +136,7 @@ func (r *SignerCertResource) Schema(
 				Required:    true,
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
-						pemCertRegexp,
+						PEMCertRegexp,
 						`must be a PEM certificate beginning with "-----BEGIN CERTIFICATE-----"`,
 					),
 				},
@@ -152,7 +152,7 @@ func (r *SignerCertResource) Schema(
 				Required: true,
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
-						labelRegexp,
+						LabelRegexp,
 						"must contain only letters, digits, dots, hyphens, or underscores (1–128 characters)",
 					),
 				},
@@ -233,7 +233,7 @@ func (r *SignerCertResource) Create(
 		return
 	}
 
-	if existing != nil && certPEMsMatch(existing.Cert, plan.CertificatePEM.ValueString()) {
+	if existing != nil && CertPEMsMatch(existing.Cert, plan.CertificatePEM.ValueString()) {
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
@@ -288,7 +288,7 @@ func (r *SignerCertResource) Read(
 		return
 	}
 
-	if !certPEMsMatch(result.Cert, state.CertificatePEM.ValueString()) {
+	if !CertPEMsMatch(result.Cert, state.CertificatePEM.ValueString()) {
 		// Cert exists in IBM Verify but has different content (stale key pair).
 		// Remove from state so Terraform recreates it on the next apply,
 		// which will trigger Create → delete stale + upload correct cert.

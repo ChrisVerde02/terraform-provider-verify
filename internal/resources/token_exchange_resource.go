@@ -80,7 +80,7 @@ func (r *TokenExchangeResource) Schema(
 				Required:    true,
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
-						urlRegexp,
+						URLRegexp,
 						"must be a valid HTTPS URL, e.g. https://example.verify.ibm.com",
 					),
 				},
