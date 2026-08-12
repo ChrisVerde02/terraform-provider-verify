@@ -142,16 +142,14 @@ func (d *TokenExchangeDataSource) Read(
 		return
 	}
 
-	result, err := verifyclient.ExchangeToken(
-		ctx,
-		verifyclient.TokenExchangeRequest{
-			TenantURL:        config.TenantURL.ValueString(),
-			ClientID:         config.ClientID.ValueString(),
-			ClientSecret:     config.ClientSecret.ValueString(),
-			SubjectToken:     config.SubjectToken.ValueString(),
-			SubjectTokenType: config.SubjectTokenType.ValueString(),
-		},
+	c, err := verifyclient.New(config.TenantURL.ValueString(),
+		verifyclient.WithClientCredentials(config.ClientID.ValueString(), config.ClientSecret.ValueString()),
 	)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to build IBM Verify client", err.Error())
+		return
+	}
+	result, err := c.Token.Exchange(ctx, config.SubjectToken.ValueString(), config.SubjectTokenType.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to exchange JWT for access token",

@@ -166,15 +166,14 @@ func (d *TokenIntrospectionDataSource) Read(
 		return
 	}
 
-	result, err := verifyclient.IntrospectToken(
-		ctx,
-		verifyclient.IntrospectionRequest{
-			TenantURL:    config.TenantURL.ValueString(),
-			ClientID:     config.ClientID.ValueString(),
-			ClientSecret: config.ClientSecret.ValueString(),
-			Token:        config.Token.ValueString(),
-		},
+	c, err := verifyclient.New(config.TenantURL.ValueString(),
+		verifyclient.WithClientCredentials(config.ClientID.ValueString(), config.ClientSecret.ValueString()),
 	)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to build IBM Verify client", err.Error())
+		return
+	}
+	result, err := c.Token.Introspect(ctx, config.Token.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to introspect access token",

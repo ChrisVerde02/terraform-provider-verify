@@ -104,11 +104,14 @@ func (d *ClientCredentialsTokenDataSource) Read(
 		return
 	}
 
-	result, err := verifyclient.GetClientCredentialsToken(ctx, verifyclient.ClientCredentialsRequest{
-		TenantURL:    config.TenantURL.ValueString(),
-		ClientID:     config.ClientID.ValueString(),
-		ClientSecret: config.ClientSecret.ValueString(),
-	})
+	c, err := verifyclient.New(config.TenantURL.ValueString(),
+		verifyclient.WithClientCredentials(config.ClientID.ValueString(), config.ClientSecret.ValueString()),
+	)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to build IBM Verify client", err.Error())
+		return
+	}
+	result, err := c.Token.ClientCredentials(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to obtain client credentials token", err.Error())
 		return

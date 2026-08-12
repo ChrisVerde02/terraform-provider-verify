@@ -186,16 +186,13 @@ func exchange(
 
 	state.SubjectTokenType = types.StringValue(subjectTokenType)
 
-	result, err := verifyclient.ExchangeToken(
-		ctx,
-		verifyclient.TokenExchangeRequest{
-			TenantURL:        state.TenantURL.ValueString(),
-			ClientID:         state.ClientID.ValueString(),
-			ClientSecret:     state.ClientSecret.ValueString(),
-			SubjectToken:     state.SubjectToken.ValueString(),
-			SubjectTokenType: subjectTokenType,
-		},
+	c, err := verifyclient.New(state.TenantURL.ValueString(),
+		verifyclient.WithClientCredentials(state.ClientID.ValueString(), state.ClientSecret.ValueString()),
 	)
+	if err != nil {
+		return err
+	}
+	result, err := c.Token.Exchange(ctx, state.SubjectToken.ValueString(), subjectTokenType)
 	if err != nil {
 		return err
 	}
