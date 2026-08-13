@@ -286,8 +286,11 @@ func (r *TokenExchangeResource) Read(
 		errMsg := err.Error()
 
 		// HTTP 404 means the grant has been revoked or deleted in IBM Verify.
-		// Remove from state so Terraform recreates the resource on the next apply.
-		if strings.Contains(errMsg, "HTTP 404") {
+		// CSIAQ5212E means the signer cert is gone — JWT signature cannot be
+		// verified. In both cases remove from state so Terraform recreates the
+		// token exchange on the next apply (after signercert is re-uploaded).
+		if strings.Contains(errMsg, "HTTP 404") ||
+			strings.Contains(errMsg, "CSIAQ5212E") {
 			resp.State.RemoveResource(ctx)
 			return
 		}
