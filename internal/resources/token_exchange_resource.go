@@ -293,6 +293,13 @@ func (r *TokenExchangeResource) Read(
 		// token exchange on the next apply (after signercert is re-uploaded).
 		if strings.Contains(errMsg, "HTTP 404") ||
 			strings.Contains(errMsg, "CSIAQ5212E") {
+			resp.Diagnostics.AddWarning(
+				"Token exchange grant removed from state",
+				"The access token could not be re-exchanged because the grant or "+
+					"signer certificate no longer exists in IBM Verify. "+
+					"The resource has been removed from state and will be recreated "+
+					"on the next apply. Error: "+errMsg,
+			)
 			resp.State.RemoveResource(ctx)
 			return
 		}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 
 	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
@@ -228,7 +229,7 @@ func (r *SignerCertResource) Create(
 	}
 
 	existing, err := c.Certs.Get(ctx, plan.Label.ValueString())
-	if err != nil {
+	if err != nil && !errors.Is(err, verifyclient.ErrNotFound) {
 		resp.Diagnostics.AddError("Unable to check existing signer certificate", err.Error())
 		return
 	}
@@ -238,7 +239,7 @@ func (r *SignerCertResource) Create(
 		return
 	}
 
-	if existing != nil {
+	if existing != nil && !errors.Is(err, verifyclient.ErrNotFound) {
 		if err = c.Certs.Delete(ctx, plan.Label.ValueString()); err != nil {
 			resp.Diagnostics.AddError("Unable to replace stale signer certificate in IBM Verify", err.Error())
 			return
@@ -277,14 +278,13 @@ func (r *SignerCertResource) Read(
 	}
 
 	result, err := c.Certs.Get(ctx, state.Label.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Unable to read signer certificate from IBM Verify", err.Error())
-		return
-	}
-
-	if result == nil {
+	if errors.Is(err, verifyclient.ErrNotFound) {
 		// Deleted outside Terraform — remove from state so it gets re-uploaded.
 		resp.State.RemoveResource(ctx)
+		return
+	}
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to read signer certificate from IBM Verify", err.Error())
 		return
 	}
 
@@ -332,6 +332,14 @@ func (r *SignerCertResource) ImportState(
 	}
 
 	result, err := r.certClient.Certs.Get(ctx, label)
+	if errors.Is(err, verifyclient.ErrNotFound) {
+		resp.Diagnostics.AddError(
+			"Signer certificate not found",
+			// placeholder — original message below
+			"placeholder",
+		)
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to fetch signer certificate from IBM Verify",
@@ -341,7 +349,7 @@ func (r *SignerCertResource) ImportState(
 	}
 	if result == nil {
 		resp.Diagnostics.AddError(
-			"Signer certificate not found",
+			"Signer certificate not found (unreachable)",
 			fmt.Sprintf("No signer certificate with label %q exists in IBM Verify. "+
 				"Verify the label and tenant URL in the provider block.", label),
 		)
