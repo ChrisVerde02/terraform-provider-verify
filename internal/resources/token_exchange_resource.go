@@ -43,7 +43,8 @@ type TokenExchangeResourceModel struct {
 	GrantID         types.String `tfsdk:"grant_id"`
 	IssuedTokenType types.String `tfsdk:"issued_token_type"`
 	Scope           types.String `tfsdk:"scope"`
-	TokenType       types.String `tfsdk:"token_type"`
+	TokenType        types.String `tfsdk:"token_type"`
+	RefreshThreshold types.Int64  `tfsdk:"refresh_threshold"`
 }
 
 // NewTokenExchangeResource creates the Terraform resource.
@@ -69,7 +70,7 @@ func (r *TokenExchangeResource) Schema(
 	resp.Schema = schema.Schema{
 		Description: "Exchanges a custom JWT for an IBM Verify access token. " +
 			"The access token is stored in state and reused across plans. " +
-			"On each plan/apply, if the token is within 60 seconds of expiry it is " +
+			"On each plan/apply, if the token is within refresh_threshold seconds of expiry it is " +
 			"automatically re-exchanged — no manual rotation needed. " +
 			"Prefer the data.verify_token_exchange data source for stateless workflows " +
 			"where a fresh token on every apply is acceptable.",
@@ -144,9 +145,7 @@ func (r *TokenExchangeResource) Schema(
 			"expires_at": schema.Int64Attribute{
 				Description: "Access-token expiry as a Unix timestamp. " +
 					"Refresh policy: the resource automatically re-exchanges the token " +
-					"when fewer than 60 seconds remain before expiry. " +
-					"The threshold is not configurable; use data.verify_token_exchange " +
-					"for a fresh token on every apply.",
+					"when fewer than refresh_threshold seconds remain before expiry.",
 				Computed: true,
 			},
 
@@ -273,8 +272,11 @@ func (r *TokenExchangeResource) Read(
 		return
 	}
 
-	// 60-second buffer — re-exchange before IBM Verify rejects the token.
-	const bufferSeconds = 60
+	// Use configured threshold, defaulting to 60 seconds.
+	bufferSeconds := state.RefreshThreshold.ValueInt64()
+	if bufferSeconds <= 0 {
+		bufferSeconds = 60
+	}
 
 	if time.Now().Unix() < state.ExpiresAt.ValueInt64()-bufferSeconds {
 		// Token is still valid — keep existing state as-is.
