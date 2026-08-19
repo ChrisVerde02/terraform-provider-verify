@@ -2,14 +2,17 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	verifyclient "github.com/ChrisVerde02/ibmverify-go/client"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -168,6 +171,20 @@ func (r *TokenExchangeResource) Schema(
 				Description: "Access-token authorization type, normally bearer.",
 				Computed:    true,
 			},
+
+			"refresh_threshold": schema.Int64Attribute{
+				Description: "Seconds before access-token expiry at which Terraform will " +
+					"automatically re-exchange the token. Defaults to 60. " +
+					"Increase for long-running plans or decrease for tighter rotation windows.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
 		},
 	}
 }
@@ -243,6 +260,11 @@ func (r *TokenExchangeResource) Create(
 		return
 	}
 
+	// Default refresh_threshold to 60 if not set by the caller.
+	if plan.RefreshThreshold.IsNull() || plan.RefreshThreshold.IsUnknown() {
+		plan.RefreshThreshold = types.Int64Value(60)
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -285,20 +307,22 @@ func (r *TokenExchangeResource) Read(
 
 	// Token has expired or is about to — attempt re-exchange.
 	if err := exchange(ctx, &state); err != nil {
-		errMsg := err.Error()
+		// Use typed APIError where possible; fall back to string matching for
+		// the IBM-specific CSIAQ5212E code that appears inside the message field.
+		var apiErr *verifyclient.APIError
+		isGone := (errors.As(err, &apiErr) && apiErr.IsNotFound()) ||
+			strings.Contains(err.Error(), "CSIAQ5212E")
 
-		// HTTP 404 means the grant has been revoked or deleted in IBM Verify.
-		// CSIAQ5212E means the signer cert is gone — JWT signature cannot be
-		// verified. In both cases remove from state so Terraform recreates the
-		// token exchange on the next apply (after signercert is re-uploaded).
-		if strings.Contains(errMsg, "HTTP 404") ||
-			strings.Contains(errMsg, "CSIAQ5212E") {
+		if isGone {
+			// HTTP 404 means the grant has been revoked or deleted in IBM Verify.
+			// CSIAQ5212E means the signer cert is gone — JWT signature cannot be
+			// verified. Remove from state so Terraform recreates it on the next apply.
 			resp.Diagnostics.AddWarning(
 				"Token exchange grant removed from state",
 				"The access token could not be re-exchanged because the grant or "+
 					"signer certificate no longer exists in IBM Verify. "+
 					"The resource has been removed from state and will be recreated "+
-					"on the next apply. Error: "+errMsg,
+					"on the next apply. Error: "+err.Error(),
 			)
 			resp.State.RemoveResource(ctx)
 			return
@@ -312,7 +336,7 @@ func (r *TokenExchangeResource) Read(
 			"The access token has expired and automatic re-exchange failed. "+
 				"Run 'terraform apply' once the underlying issue is resolved "+
 				"(e.g. ensure the subject JWT is valid and IBM Verify is reachable). "+
-				"Error: "+errMsg,
+				"Error: "+err.Error(),
 		)
 		return
 	}
