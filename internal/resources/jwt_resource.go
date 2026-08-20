@@ -33,6 +33,8 @@ type JWTResourceModel struct {
 	PrivateKeyPEM types.String `tfsdk:"private_key_pem"`
 	ExpiresIn     types.Int64  `tfsdk:"expires_in_seconds"`
 
+	RefreshThreshold types.Int64  `tfsdk:"refresh_threshold"`
+
 	Token     types.String `tfsdk:"token"`
 	IssuedAt  types.Int64  `tfsdk:"issued_at"`
 	ExpiresAt types.Int64  `tfsdk:"expires_at"`
@@ -62,10 +64,9 @@ func (r *JWTResource) Schema(
 		Description: "Generates an RS256-signed JWT using an RSA private key. " +
 			"The JWT is stored in state and reused across plans. " +
 			"Refresh policy: on each plan/apply the resource checks the token expiry. " +
-			"If fewer than 60 seconds remain, a new JWT is signed with a fresh jti claim " +
+			"If fewer than refresh_threshold seconds remain, a new JWT is signed with a fresh jti claim " +
 			"automatically — preventing IBM Verify replay rejection (CSIAQ5206E). " +
-			"The threshold is not configurable; use data.verify_jwt for a fresh JWT " +
-			"on every apply.",
+			"Use data.verify_jwt for a fresh JWT on every apply.",
 
 		Attributes: map[string]schema.Attribute{
 			"issuer": schema.StringAttribute{
@@ -136,9 +137,19 @@ func (r *JWTResource) Schema(
 			"expires_at": schema.Int64Attribute{
 				Description: "JWT exp value as a Unix timestamp. " +
 					"Refresh policy: the resource regenerates the JWT with a fresh jti " +
-					"automatically when fewer than 60 seconds remain before this timestamp. " +
-					"The threshold is not configurable.",
+					"automatically when fewer than refresh_threshold seconds remain before this timestamp.",
 				Computed: true,
+			},
+
+			"refresh_threshold": schema.Int64Attribute{
+				Description: "Seconds before JWT expiry at which Terraform will automatically " +
+					"regenerate the JWT. Defaults to 60. Increase for long-running plans " +
+					"or decrease for tighter rotation windows.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
 			},
 		},
 	}
@@ -208,6 +219,11 @@ func (r *JWTResource) Create(
 		return
 	}
 
+	// Default refresh_threshold to 60 if not set.
+	if plan.RefreshThreshold.IsNull() || plan.RefreshThreshold.IsUnknown() {
+		plan.RefreshThreshold = types.Int64Value(60)
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -228,8 +244,11 @@ func (r *JWTResource) Read(
 		return
 	}
 
-	// 60-second buffer — regenerate before IBM Verify rejects the token.
-	const bufferSeconds = 60
+	// Use configured threshold, defaulting to 60 seconds.
+	bufferSeconds := state.RefreshThreshold.ValueInt64()
+	if bufferSeconds <= 0 {
+		bufferSeconds = 60
+	}
 
 	if time.Now().Unix() < state.ExpiresAt.ValueInt64()-bufferSeconds {
 		// JWT is still valid — keep existing state as-is.

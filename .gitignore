@@ -1,3 +1,7 @@
+# macOS metadata — never commit
+.DS_Store
+**/.DS_Store
+
 # Bob AI assistant artifacts — never commit
 .bob/
 
