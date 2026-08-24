@@ -24,8 +24,15 @@ All steps run automatically on `terraform apply`. On subsequent runs, Terraform 
 
 ## Provider version
 
-```
-ChrisVerde02/verify ~> 0.4.8
+```hcl
+terraform {
+  required_providers {
+    verify = {
+      source  = "ChrisVerde02/verify"
+      version = "~> 0.4"
+    }
+  }
+}
 ```
 
 Published at: https://registry.terraform.io/providers/ChrisVerde02/verify
@@ -51,7 +58,7 @@ Under **Custom scopes and API access**, no special entitlements are needed for t
 
 ### 2. cert-manager API client (certificate management)
 
-This client is used to upload and manage the signer certificate in IBM Verify.
+This client uploads and manages the signer certificate in IBM Verify.
 
 In the IBM Verify console, go to **Security → API access → Add API client**:
 
@@ -66,6 +73,36 @@ Under **Entitlements**, enable:
 
 > **Important:** IBM Verify lowercases all signer certificate labels on storage. The `jwt_key_id` in your `terraform.tfvars` must use lowercase (e.g. `demotokensigner`) to match.
 
+## Provider configuration
+
+Credentials can be supplied either in the `provider` block or via environment variables. Environment variables take effect when the block attribute is omitted.
+
+```hcl
+provider "verify" {
+  tenant_url = "https://YOUR-TENANT.verify.ibm.com"
+
+  # STS client — used for token exchange and introspection
+  sts_client_id     = var.sts_client_id
+  sts_client_secret = var.sts_client_secret
+
+  # cert-manager client — used for signer certificate management
+  cert_manager_client_id     = var.cert_manager_client_id
+  cert_manager_client_secret = var.cert_manager_client_secret
+}
+```
+
+### Environment variables
+
+| Variable | Provider attribute |
+|---|---|
+| `VERIFY_TENANT_URL` | `tenant_url` |
+| `VERIFY_STS_CLIENT_ID` | `sts_client_id` |
+| `VERIFY_STS_CLIENT_SECRET` | `sts_client_secret` |
+| `VERIFY_CERT_MANAGER_CLIENT_ID` | `cert_manager_client_id` |
+| `VERIFY_CERT_MANAGER_CLIENT_SECRET` | `cert_manager_client_secret` |
+
+When credentials are configured in the provider block, resources do not need their own `client_id` / `client_secret` inputs.
+
 ## Project structure
 
 ```text
@@ -75,6 +112,11 @@ terraform-provider-verify/
 ├── go.sum
 ├── README.md
 ├── .gitignore
+├── .goreleaser.yml
+├── .github/
+│   └── workflows/
+│       ├── ci.yml        # lint, vet, test on every push/PR
+│       └── release.yml   # goreleaser on v* tags
 ├── internal/
 │   ├── provider/
 │   │   └── provider.go
@@ -83,18 +125,25 @@ terraform-provider-verify/
 │   │   ├── jwt_resource.go               # verify_jwt
 │   │   ├── token_exchange_resource.go    # verify_token_exchange
 │   │   ├── signercert_resource.go        # verify_signercert
-│   │   └── token_introspection_resource.go
+│   │   ├── token_introspection_resource.go
+│   │   ├── validators.go                 # shared URL / label / PEM regexps
+│   │   └── tests/
+│   │       ├── signercert_test.go
+│   │       ├── signercert_http_test.go   # httptest-backed SDK tests
+│   │       ├── jwt_resource_test.go
+│   │       ├── token_exchange_resource_test.go
+│   │       └── validators_test.go
 │   └── datasources/
 │       ├── data_verify_jwt.go
 │       ├── data_verify_token_exchange.go
 │       ├── data_verify_client_credentials_token.go
 │       └── token_introspection_data_source.go
 ├── modules/
-│   ├── certificate/     # Wraps verify_certificate + local file writes
+│   ├── certificate/     # Wraps verify_certificate
 │   ├── signercert/      # Wraps verify_signercert
 │   ├── jwt/             # Wraps verify_jwt
 │   ├── token_exchange/  # Wraps verify_token_exchange
-│   └── introspection/   # Wraps verify_token_introspection data source
+│   └── introspection/   # Wraps data.verify_token_introspection
 └── examples2/           # Working end-to-end example (git-ignored, see below)
     ├── main.tf
     └── terraform.tfvars
@@ -108,9 +157,17 @@ The `modules/` directory contains reusable Terraform modules that wrap the provi
 
 ### `modules/certificate`
 
-Wraps `verify_certificate` and two `local` file writes. Generates the RSA key pair and self-signed cert, then writes `cert.pem` and `key.pem` to disk.
+Wraps `verify_certificate`. Generates an RSA key pair and self-signed cert.
 
-Inputs: `common_name`, `organization`, `country`, `validity_days`, `key_size`, `certificate_output_path`, `private_key_output_path`
+| Input | Default | Description |
+|---|---|---|
+| `common_name` | — | Certificate CN |
+| `organization` | — | Certificate O |
+| `country` | — | Two-letter ISO country code |
+| `validity_days` | — | Certificate lifetime in days (≥ 1) |
+| `key_size` | — | RSA key size: 2048, 3072, or 4096 |
+| `certificate_output_path` | — | Path to write `cert.pem` |
+| `private_key_output_path` | — | Path to write `key.pem` |
 
 Outputs: `certificate_pem`, `private_key_pem`, `certificate_path`, `private_key_path`
 
@@ -118,23 +175,43 @@ Outputs: `certificate_pem`, `private_key_pem`, `certificate_path`, `private_key_
 
 Wraps `verify_jwt`. Signs an RS256 JWT using the private key from the certificate module.
 
-Inputs: `issuer`, `subject`, `key_id`, `private_key_pem`, `expires_in_seconds` (default 900)
+| Input | Default | Description |
+|---|---|---|
+| `issuer` | — | JWT `iss` claim |
+| `subject` | — | JWT `sub` claim (Cloud Directory username) |
+| `key_id` | — | JWT `kid` header — must match the signer cert label |
+| `private_key_pem` | — | RSA private key (from `modules/certificate`) |
+| `expires_in_seconds` | `900` | JWT lifetime in seconds |
+| `refresh_threshold` | `60` | Seconds before expiry at which the JWT is auto-refreshed |
 
 Outputs: `token`, `issued_at`, `expires_at`
 
 ### `modules/token_exchange`
 
-Wraps `verify_token_exchange`. Exchanges a signed JWT for an IBM Verify access token using RFC 8693.
+Wraps `verify_token_exchange`. Exchanges a signed JWT for an IBM Verify access token (RFC 8693).
 
-Inputs: `tenant_url`, `client_id`, `client_secret`, `subject_token`, `subject_token_type`
+| Input | Default | Description |
+|---|---|---|
+| `tenant_url` | — | IBM Verify tenant URL |
+| `client_id` | — | STS client ID |
+| `client_secret` | — | STS client secret |
+| `subject_token` | — | Signed JWT to exchange |
+| `subject_token_type` | — | RFC 8693 token-type URN |
+| `refresh_threshold` | `60` | Seconds before expiry at which the token is auto-re-exchanged |
 
 Outputs: `access_token`, `expires_in`, `expires_at`, `grant_id`, `issued_token_type`, `token_type`, `scope`
 
 ### `modules/signercert`
 
-Wraps `verify_signercert`. Uploads the certificate to IBM Verify and manages its lifecycle. Obtains its own client credentials token internally — stale certs (mismatched key pair) are automatically replaced on the next apply.
+Wraps `verify_signercert`. Uploads the certificate to IBM Verify. Stale certs (mismatched key pair) are automatically replaced on the next apply.
 
-Inputs: `tenant_url`, `cert_manager_client_id`, `cert_manager_client_secret`, `certificate_pem`, `label`
+| Input | Default | Description |
+|---|---|---|
+| `tenant_url` | — | IBM Verify tenant URL |
+| `cert_manager_client_id` | — | cert-manager client ID |
+| `cert_manager_client_secret` | — | cert-manager client secret |
+| `certificate_pem` | — | PEM certificate to upload |
+| `label` | — | Signer cert label (lowercase, 1–128 chars) |
 
 Outputs: `label`
 
@@ -142,35 +219,43 @@ Outputs: `label`
 
 Wraps `data.verify_token_introspection`. Confirms the access token is live and returns user metadata. Re-evaluated on every plan/apply.
 
-Inputs: `tenant_url`, `client_id`, `client_secret`, `token`
+| Input | Description |
+|---|---|
+| `tenant_url` | IBM Verify tenant URL |
+| `client_id` | STS client ID |
+| `client_secret` | STS client secret |
+| `token` | Access token to introspect |
 
 Outputs: `active`, `subject`, `preferred_username`, `username`, `name`, `given_name`, `scope`, `expires_at`
 
-
 ## Quick start
 
-### 1. Create `examples/terraform.tfvars`
+### 1. Configure the provider
 
-The `examples/` directory already contains `main.tf`. You only need to create a `terraform.tfvars` file with your credentials — it is git-ignored and never committed.
-
-### 2. Create `examples/main.tf`
+Create `examples/main.tf`:
 
 ```hcl
 terraform {
   required_providers {
     verify = {
       source  = "ChrisVerde02/verify"
-      version = "0.4.8"
+      version = "~> 0.4"
     }
   }
 }
 
-provider "verify" {}
+provider "verify" {
+  tenant_url                 = var.verify_tenant_url
+  sts_client_id              = var.sts_client_id
+  sts_client_secret          = var.sts_client_secret
+  cert_manager_client_id     = var.cert_manager_client_id
+  cert_manager_client_secret = var.cert_manager_client_secret
+}
 
 # ---------------------------------------------------------------
 # Module: certificate
 # Generates an RSA key pair and self-signed X.509 certificate.
-# Stored in Terraform state — reused until expired (validity_days),
+# Stored in Terraform state — reused until near expiry,
 # then automatically regenerated.
 # ---------------------------------------------------------------
 module "certificate" {
@@ -189,8 +274,7 @@ module "certificate" {
 # ---------------------------------------------------------------
 # Module: signercert
 # Uploads the certificate to IBM Verify so it can validate JWT
-# signatures during token exchange. Obtains its own client
-# credentials token internally — no access_token in config.
+# signatures during token exchange.
 # ---------------------------------------------------------------
 module "signercert" {
   source = "../modules/signercert"
@@ -244,161 +328,23 @@ module "introspection" {
   client_secret = var.sts_client_secret
   token         = module.token_exchange.access_token
 }
-
-# ---------------------------------------------------------------
-# Variables
-# ---------------------------------------------------------------
-
-variable "verify_tenant_url" {
-  type        = string
-  description = "IBM Verify tenant base URL."
-}
-
-variable "sts_client_id" {
-  type        = string
-  description = "IBM Verify STS client ID."
-}
-
-variable "sts_client_secret" {
-  type        = string
-  description = "IBM Verify STS client secret."
-  sensitive   = true
-}
-
-variable "cert_manager_client_id" {
-  type        = string
-  description = "IBM Verify cert-manager API client ID."
-}
-
-variable "cert_manager_client_secret" {
-  type        = string
-  description = "IBM Verify cert-manager API client secret."
-  sensitive   = true
-}
-
-variable "cert_common_name" {
-  type    = string
-  default = "demotokensigner"
-}
-
-variable "cert_organization" {
-  type    = string
-  default = "IBM"
-}
-
-variable "cert_country" {
-  type    = string
-  default = "US"
-}
-
-variable "cert_validity_days" {
-  type    = number
-  default = 365
-}
-
-variable "cert_key_size" {
-  type    = number
-  default = 4096
-}
-
-variable "certificate_output_path" {
-  type    = string
-  default = "../examples/certificates/cert.pem"
-}
-
-variable "private_key_output_path" {
-  type    = string
-  default = "../examples/certificates/key.pem"
-}
-
-variable "jwt_issuer" {
-  type        = string
-  description = "Value placed in the JWT iss claim."
-}
-
-variable "jwt_subject" {
-  type        = string
-  description = "IBM Verify Cloud Directory username."
-}
-
-variable "jwt_key_id" {
-  type        = string
-  description = "Signer cert label in IBM Verify. IBM Verify lowercases labels — use lowercase here."
-}
-
-variable "subject_token_type" {
-  type    = string
-  default = "urn:demo:token-type:user-jwt"
-}
-
-# ---------------------------------------------------------------
-# Outputs
-# ---------------------------------------------------------------
-
-output "certificate_pem" {
-  value       = module.certificate.certificate_pem
-  description = "Current certificate — automatically uploaded to IBM Verify."
-}
-
-output "certificate_path" {
-  value       = module.certificate.certificate_path
-  description = "Path to cert.pem on disk."
-}
-
-output "access_token" {
-  value     = module.token_exchange.access_token
-  sensitive = true
-}
-
-output "access_token_expires_in" {
-  value = module.token_exchange.expires_in
-}
-
-output "grant_id" {
-  value = module.token_exchange.grant_id
-}
-
-output "issued_token_type" {
-  value = module.token_exchange.issued_token_type
-}
-
-output "token_type" {
-  value = module.token_exchange.token_type
-}
-
-output "token_active" {
-  value = module.introspection.active
-}
-
-output "introspected_subject" {
-  value = module.introspection.subject
-}
-
-output "introspected_preferred_username" {
-  value = module.introspection.preferred_username
-}
-
-output "introspected_expires_at" {
-  value = module.introspection.expires_at
-}
 ```
 
-### 3. Create `examples/terraform.tfvars`
+### 2. Create `examples/terraform.tfvars`
 
 ```hcl
 # IBM Verify tenant URL
 verify_tenant_url = "https://YOUR-TENANT.verify.ibm.com"
 
-# STS API client credentials (token exchange — impersonates user via JWT)
+# STS API client credentials (token exchange)
 sts_client_id     = "YOUR-STS-CLIENT-ID"
 sts_client_secret = "YOUR-STS-CLIENT-SECRET"
 
-# cert-manager API client credentials (client credentials — uploads signer certs)
+# cert-manager API client credentials
 cert_manager_client_id     = "YOUR-CERT-MANAGER-CLIENT-ID"
 cert_manager_client_secret = "YOUR-CERT-MANAGER-CLIENT-SECRET"
 
-# Certificate settings
-# IBM Verify lowercases cert labels — use lowercase here
+# Certificate settings — IBM Verify lowercases cert labels, use lowercase
 cert_common_name   = "demotokensigner"
 cert_organization  = "IBM"
 cert_country       = "US"
@@ -414,13 +360,13 @@ jwt_issuer  = "https://demo.ibm.com"
 jwt_subject = "YOUR-CLOUD-DIRECTORY-USERNAME"
 jwt_key_id  = "demotokensigner"
 
-# Token type URN configured in your IBM Verify STS client
+# Token type URN — must match your IBM Verify STS client configuration
 subject_token_type = "urn:demo:token-type:user-jwt"
 ```
 
 > **Never commit `terraform.tfvars`.** It is already git-ignored in this project.
 
-### 4. Initialise and apply
+### 3. Initialise and apply
 
 ```bash
 cd examples
@@ -430,13 +376,12 @@ terraform apply
 
 On success you will see outputs including `token_active = true` and `introspected_preferred_username`.
 
-### 5. Verify idempotency
+### 4. Verify idempotency
 
 ```bash
 terraform plan
+# Should show: No changes. Your infrastructure matches the configuration.
 ```
-
-Should show: `No changes. Your infrastructure matches the configuration.`
 
 ## Useful commands
 
@@ -453,15 +398,15 @@ terraform output introspected_expires_at
 # Inspect the certificate on disk
 openssl x509 -in ../examples/certificates/cert.pem -noout -text
 
-# Tear everything down (removes cert from IBM Verify, clears state)
+# Tear everything down (removes cert from IBM Verify, clears all state)
 terraform destroy
 ```
 
-## Provider resources
+## Provider resources reference
 
 ### `verify_certificate`
 
-Generates a self-signed RSA X.509 certificate and private key. Self-healing — automatically regenerates 24 hours before expiry.
+Generates a self-signed RSA X.509 certificate and private key locally. Self-healing — automatically regenerates 24 hours before the `NotAfter` date.
 
 ```hcl
 resource "verify_certificate" "example" {
@@ -469,29 +414,53 @@ resource "verify_certificate" "example" {
   organization  = "IBM"
   country       = "US"
   validity_days = 365
-  key_size      = 4096
+  key_size      = 4096  # 2048, 3072, or 4096
 }
 ```
 
-Outputs: `certificate_pem`, `private_key_pem`, `expires_at`
+| Attribute | Type | Description |
+|---|---|---|
+| `common_name` | string (required) | Certificate CN |
+| `organization` | string (required) | Certificate O |
+| `country` | string (required) | Two-letter ISO country code |
+| `validity_days` | number (required) | Lifetime in days (≥ 1) |
+| `key_size` | number (required) | RSA key bits: 2048, 3072, or 4096 |
+| `certificate_pem` | string (computed) | Generated X.509 certificate |
+| `private_key_pem` | string (computed, sensitive) | RSA private key |
+| `expires_at` | number (computed) | Certificate NotAfter as Unix timestamp |
+
+> Import not supported — this resource generates keys locally. Use `data.verify_jwt` for stateless operations.
 
 ### `verify_signercert`
 
-Uploads a signer certificate to IBM Verify. Obtains its own client credentials token internally — no `access_token` input needed. On `terraform destroy`, deletes the cert from IBM Verify. On the next `terraform apply`, re-uploads it.
+Uploads a PEM certificate to IBM Verify as a signer certificate. IBM Verify uses it to validate JWT signatures during token exchange. Stale certs (key-pair mismatch) are automatically replaced. Supports `terraform import`.
 
 ```hcl
 resource "verify_signercert" "example" {
   tenant_url                 = "https://YOUR-TENANT.verify.ibm.com"
-  cert_manager_client_id     = var.cert_manager_client_id
-  cert_manager_client_secret = var.cert_manager_client_secret
+  cert_manager_client_id     = var.cert_manager_client_id     # optional if set in provider
+  cert_manager_client_secret = var.cert_manager_client_secret # optional if set in provider
   certificate_pem            = verify_certificate.example.certificate_pem
   label                      = "demotokensigner"
 }
 ```
 
+```bash
+# Import an existing cert into Terraform state
+terraform import verify_signercert.example demotokensigner
+```
+
+| Attribute | Type | Description |
+|---|---|---|
+| `tenant_url` | string (required) | IBM Verify tenant URL |
+| `cert_manager_client_id` | string (optional) | cert-manager client ID — falls back to provider block |
+| `cert_manager_client_secret` | string (optional, sensitive) | cert-manager client secret — falls back to provider block |
+| `certificate_pem` | string (required) | PEM certificate beginning with `-----BEGIN CERTIFICATE-----` |
+| `label` | string (required) | Cert label in IBM Verify — must match JWT `kid` header. Letters, digits, dots, hyphens, underscores (1–128 chars) |
+
 ### `verify_jwt`
 
-Generates an RS256-signed JWT. Self-healing — automatically regenerates with a fresh `jti` 60 seconds before expiry.
+Generates an RS256-signed JWT using an RSA private key. Self-healing — automatically regenerates with a fresh `jti` when fewer than `refresh_threshold` seconds remain before expiry, preventing IBM Verify replay rejection (`CSIAQ5206E`).
 
 ```hcl
 resource "verify_jwt" "example" {
@@ -500,14 +469,28 @@ resource "verify_jwt" "example" {
   key_id             = "demotokensigner"
   private_key_pem    = verify_certificate.example.private_key_pem
   expires_in_seconds = 900
+  refresh_threshold  = 60  # optional, default 60
 }
 ```
 
-JWT claims: `iss`, `sub`, `iat`, `exp`, `jti`. JWT header: `alg=RS256`, `kid=<label>`.
+| Attribute | Type | Description |
+|---|---|---|
+| `issuer` | string (required) | JWT `iss` claim |
+| `subject` | string (required) | JWT `sub` claim (Cloud Directory username) |
+| `key_id` | string (required) | JWT `kid` header — must match the signer cert label |
+| `private_key_pem` | string (required, sensitive) | RSA private key |
+| `expires_in_seconds` | number (required) | JWT lifetime in seconds (≥ 1) |
+| `refresh_threshold` | number (optional) | Seconds before expiry to auto-refresh. Default: `60` |
+| `token` | string (computed, sensitive) | Signed JWT |
+| `issued_at` | number (computed) | `iat` claim as Unix timestamp |
+| `expires_at` | number (computed) | `exp` claim as Unix timestamp |
+| `jwt_id` | string (computed) | `jti` claim value |
+
+> Import not supported — JWTs are signed locally. Use `data.verify_jwt` for stateless JWT generation.
 
 ### `verify_token_exchange`
 
-Exchanges the JWT for an IBM Verify access token using RFC 8693. Self-healing — re-exchanges automatically 60 seconds before the access token expires.
+Exchanges a custom JWT for an IBM Verify access token using RFC 8693. Self-healing — automatically re-exchanges when fewer than `refresh_threshold` seconds remain before the access token expires.
 
 ```hcl
 resource "verify_token_exchange" "example" {
@@ -516,14 +499,35 @@ resource "verify_token_exchange" "example" {
   client_secret      = var.sts_client_secret
   subject_token      = verify_jwt.example.token
   subject_token_type = "urn:demo:token-type:user-jwt"
+  refresh_threshold  = 60  # optional, default 60
 }
 ```
 
-Outputs: `access_token`, `expires_in`, `expires_at`, `grant_id`, `issued_token_type`, `token_type`
+| Attribute | Type | Description |
+|---|---|---|
+| `tenant_url` | string (required) | IBM Verify tenant URL |
+| `client_id` | string (required) | STS client ID |
+| `client_secret` | string (required, sensitive) | STS client secret |
+| `subject_token` | string (required, sensitive) | Signed JWT to exchange |
+| `subject_token_type` | string (optional) | RFC 8693 token-type URN. Default: `urn:demo:token-type:user-jwt` |
+| `refresh_threshold` | number (optional) | Seconds before expiry to auto-re-exchange. Default: `60` |
+| `access_token` | string (computed, sensitive) | Access token returned by IBM Verify |
+| `expires_in` | number (computed) | Token lifetime in seconds |
+| `expires_at` | number (computed) | Token expiry as Unix timestamp |
+| `grant_id` | string (computed) | Grant ID |
+| `issued_token_type` | string (computed) | Token type issued |
+| `scope` | string (computed) | Granted scopes |
+| `token_type` | string (computed) | Authorization type (normally `bearer`) |
+
+**Refresh behaviour on failure:**
+- HTTP 404 or `CSIAQ5212E` (cert deleted) → resource removed from state, recreated on next apply. A warning diagnostic is shown.
+- All other errors (401, 5xx, network) → error diagnostic shown, state preserved so the problem is visible.
+
+> Import not supported — access tokens are ephemeral. Use `data.verify_token_exchange` for stateless workflows.
 
 ### `data.verify_token_introspection`
 
-Introspects the access token against IBM Verify. Re-evaluated on every plan/apply.
+Introspects an IBM Verify access token. Re-evaluated on every plan/apply.
 
 ```hcl
 data "verify_token_introspection" "example" {
@@ -534,11 +538,43 @@ data "verify_token_introspection" "example" {
 }
 ```
 
-Outputs: `active`, `subject`, `preferred_username`, `username`, `name`, `given_name`, `scope`, `expires_at`
+Outputs: `active`, `subject`, `preferred_username`, `username`, `name`, `given_name`, `scope`, `token_type`, `issuer`, `issued_at`, `expires_at`
+
+### `data.verify_jwt`
+
+Generates a fresh RS256-signed JWT on every plan/apply. No state — `jti` is always unique.
+
+```hcl
+data "verify_jwt" "example" {
+  issuer             = "https://demo.ibm.com"
+  subject            = "bretton"
+  key_id             = "demotokensigner"
+  private_key_pem    = verify_certificate.example.private_key_pem
+  expires_in_seconds = 900
+}
+```
+
+Outputs: `token`, `issued_at`, `expires_at`
+
+### `data.verify_token_exchange`
+
+Exchanges a JWT for an IBM Verify access token on every plan/apply. No state — always fresh.
+
+```hcl
+data "verify_token_exchange" "example" {
+  tenant_url         = "https://YOUR-TENANT.verify.ibm.com"
+  client_id          = var.sts_client_id
+  client_secret      = var.sts_client_secret
+  subject_token      = data.verify_jwt.example.token
+  subject_token_type = "urn:demo:token-type:user-jwt"
+}
+```
+
+Outputs: `access_token`, `expires_in`, `grant_id`, `issued_token_type`, `scope`, `token_type`
 
 ### `data.verify_client_credentials_token`
 
-Obtains an access token using the OAuth 2.0 client credentials grant. Re-evaluated on every plan/apply.
+Obtains an access token via the OAuth 2.0 client credentials grant. Re-evaluated on every plan/apply.
 
 ```hcl
 data "verify_client_credentials_token" "example" {
@@ -548,6 +584,30 @@ data "verify_client_credentials_token" "example" {
 }
 ```
 
+Outputs: `access_token`, `expires_in`, `token_type`, `scope`
+
+## Testing
+
+```bash
+# Run all tests (no live tenant required)
+go test ./...
+
+# Run with verbose output
+go test ./... -v
+
+# Run with coverage report
+go test ./... -coverprofile=coverage.out && go tool cover -html=coverage.out
+```
+
+Tests use `net/http/httptest` to mock IBM Verify responses. The full status-code matrix (200/201/204/400/401/404/429/500) is covered for `Import`, `Get`, `Delete`, `Exchange`, and `ClientCredentials`. No credentials or network access are needed.
+
+## CI/CD
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | Push / PR to any branch | `go vet`, `go build`, `go test ./...` |
+| `release.yml` | Push a `v*` tag | Builds darwin/linux/windows (amd64+arm64), creates GitHub Release via goreleaser, signs SHA256SUMS with GPG |
+
 ## Common errors
 
 ### `CSIAQ5212E Unable to verify the integrity of the token`
@@ -556,31 +616,30 @@ The JWT signature does not match the certificate stored in IBM Verify. Causes:
 - `jwt_key_id` does not exactly match the cert label in IBM Verify (IBM Verify lowercases labels — use lowercase in `terraform.tfvars`)
 - The certificate in IBM Verify is stale (from a previous key pair)
 
-Fix: delete the cert in IBM Verify, then run `terraform apply`.
+Fix: run `terraform apply` — the provider detects the mismatch, deletes the stale cert, and re-uploads the correct one automatically.
 
 ### `CSIAO5405E The friendly name must be unique`
 
 A certificate with that label already exists in IBM Verify but is not tracked in Terraform state (e.g. after `rm terraform.tfstate`).
 
-Fix:
+Fix — import it instead of recreating:
 ```bash
-# Delete from IBM Verify manually, then apply
-terraform apply
+terraform import verify_signercert.example demotokensigner
 ```
 
-Or use `terraform destroy` before wiping state.
+Or delete the cert in IBM Verify manually, then `terraform apply`.
 
 ### `CSIAK4300E You are not authorized`
 
-The access token used to upload the cert lacks `manageCerts` entitlement. Fix: ensure the cert-manager API client has **Manage certificates** and **Read certificates** enabled under **Security → API access**.
+The cert-manager API client lacks `manageCerts` entitlement. Fix: ensure **Manage certificates** and **Read certificates** are enabled under **Security → API access**.
 
 ### `invalid_client` (HTTP 401)
 
-Wrong client ID or secret, or the STS client does not exist in the tenant. Check your `terraform.tfvars` values.
+Wrong client ID or secret, or the client does not exist in the tenant. Check your `terraform.tfvars` values.
 
 ### `invalid_request: unsupported_token_type`
 
-The `subject_token_type` in `terraform.tfvars` does not match what is configured in the STS client's Token Exchange settings in IBM Verify.
+The `subject_token_type` does not match what is configured in the STS client's Token Exchange settings in IBM Verify.
 
 ## Security
 
