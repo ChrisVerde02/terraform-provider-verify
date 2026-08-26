@@ -26,6 +26,19 @@ type ProviderData struct {
 	// CertClient is configured with the cert-manager client credentials and is
 	// used for signer certificate management operations.
 	CertClient *verifyclient.Client
+
+	// AppsClient is configured with the app client credentials and is used for
+	// IBM Verify application management operations. Falls back to STSClient if
+	// dedicated app credentials are not provided.
+	AppsClient *verifyclient.Client
+
+	// UsersClient is configured for IBM Verify user management (SCIM v2).
+	// Falls back to STSClient if dedicated user credentials are not provided.
+	UsersClient *verifyclient.Client
+
+	// APIClientsClient is configured for IBM Verify Dynamic Client Registration.
+	// Falls back to STSClient if dedicated DCR credentials are not provided.
+	APIClientsClient *verifyclient.Client
 }
 
 // GetSTSClient returns the STS SDK client. May be nil if not configured.
@@ -33,6 +46,15 @@ func (pd *ProviderData) GetSTSClient() *verifyclient.Client { return pd.STSClien
 
 // GetCertClient returns the cert-manager SDK client. May be nil if not configured.
 func (pd *ProviderData) GetCertClient() *verifyclient.Client { return pd.CertClient }
+
+// GetAppsClient returns the apps SDK client. May be nil if not configured.
+func (pd *ProviderData) GetAppsClient() *verifyclient.Client { return pd.AppsClient }
+
+// GetUsersClient returns the users SDK client. May be nil if not configured.
+func (pd *ProviderData) GetUsersClient() *verifyclient.Client { return pd.UsersClient }
+
+// GetAPIClientsClient returns the API clients SDK client. May be nil if not configured.
+func (pd *ProviderData) GetAPIClientsClient() *verifyclient.Client { return pd.APIClientsClient }
 
 // VerifyProvider defines our Terraform provider.
 type VerifyProvider struct{}
@@ -58,6 +80,8 @@ type verifyProviderModel struct {
 	STSClientSecret         types.String `tfsdk:"sts_client_secret"`
 	CertManagerClientID     types.String `tfsdk:"cert_manager_client_id"`
 	CertManagerClientSecret types.String `tfsdk:"cert_manager_client_secret"`
+	AppClientID             types.String `tfsdk:"app_client_id"`
+	AppClientSecret         types.String `tfsdk:"app_client_secret"`
 }
 
 // Schema defines provider-level configuration attributes.
@@ -101,6 +125,19 @@ func (p *VerifyProvider) Schema(
 				Optional:  true,
 				Sensitive: true,
 			},
+			"app_client_id": schema.StringAttribute{
+				Description: "Client ID of the API client used for application management. " +
+					"Falls back to sts_client_id if not set. " +
+					"Can also be set with VERIFY_APP_CLIENT_ID.",
+				Optional: true,
+			},
+			"app_client_secret": schema.StringAttribute{
+				Description: "Client secret of the app management API client. " +
+					"Falls back to sts_client_secret if not set. " +
+					"Can also be set with VERIFY_APP_CLIENT_SECRET.",
+				Optional:  true,
+				Sensitive: true,
+			},
 		},
 	}
 }
@@ -125,6 +162,8 @@ func (p *VerifyProvider) Configure(
 	stsClientSecret := resolveValue(config.STSClientSecret, "VERIFY_STS_CLIENT_SECRET")
 	certClientID := resolveValue(config.CertManagerClientID, "VERIFY_CERT_MANAGER_CLIENT_ID")
 	certClientSecret := resolveValue(config.CertManagerClientSecret, "VERIFY_CERT_MANAGER_CLIENT_SECRET")
+	appClientID := resolveValue(config.AppClientID, "VERIFY_APP_CLIENT_ID")
+	appClientSecret := resolveValue(config.AppClientSecret, "VERIFY_APP_CLIENT_SECRET")
 
 	// tenantURL is required for any API operation.
 	if tenantURL == "" {
@@ -161,6 +200,31 @@ func (p *VerifyProvider) Configure(
 		pd.CertClient = c
 	}
 
+	// Build the apps client. Prefer dedicated app credentials; fall back to
+	// the STS client if app-specific credentials are not provided.
+	if appClientID != "" && appClientSecret != "" {
+		c, err := verifyclient.New(tenantURL,
+			verifyclient.WithClientCredentials(appClientID, appClientSecret),
+		)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to create apps client", err.Error())
+			return
+		}
+		pd.AppsClient = c
+	} else if pd.STSClient != nil {
+		pd.AppsClient = pd.STSClient
+	}
+
+	// UsersClient reuses STSClient — same verifyclient.Client has .Users wired internally.
+	if pd.STSClient != nil {
+		pd.UsersClient = pd.STSClient
+	}
+
+	// APIClientsClient reuses STSClient — same verifyclient.Client has .APIClients wired internally.
+	if pd.STSClient != nil {
+		pd.APIClientsClient = pd.STSClient
+	}
+
 	// Make ProviderData available to all resources and data sources.
 	resp.ResourceData = pd
 	resp.DataSourceData = pd
@@ -184,6 +248,9 @@ func (p *VerifyProvider) Resources(
 		resources.NewJWTResource,
 		resources.NewTokenExchangeResource,
 		resources.NewSignerCertResource,
+		resources.NewApplicationResource,
+		resources.NewUserResource,
+		resources.NewAPIClientResource,
 	}
 }
 

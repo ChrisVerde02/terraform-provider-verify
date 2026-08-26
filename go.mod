@@ -3,7 +3,7 @@ module github.com/Christian-Verderame/terraform-provider-verify
 go 1.25.0
 
 require (
-	github.com/ChrisVerde02/ibmverify-go v1.6.0
+	github.com/ChrisVerde02/ibmverify-go v1.6.5
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 	github.com/hashicorp/terraform-plugin-framework-validators v0.19.0
 )

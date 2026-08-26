@@ -1,5 +1,5 @@
-github.com/ChrisVerde02/ibmverify-go v1.6.0 h1:uPjyOyg9xB+uQsW4hujIvZmj7x/+L7mQf6FLlLLOyB0=
-github.com/ChrisVerde02/ibmverify-go v1.6.0/go.mod h1:gG3C0FdI/JYG8E4IqOc5n4nZZPtSPqb4ImURVl+l8dQ=
+github.com/ChrisVerde02/ibmverify-go v1.6.5 h1:mZSzoT0/3xIc9D4xh/0uCPAfew+7Djzs2/H/ib41RX4=
+github.com/ChrisVerde02/ibmverify-go v1.6.5/go.mod h1:gG3C0FdI/JYG8E4IqOc5n4nZZPtSPqb4ImURVl+l8dQ=
 github.com/bufbuild/protocompile v0.14.1 h1:iA73zAf/fyljNjQKwYzUHD6AD4R8KMasmwa/FBatYVw=
 github.com/bufbuild/protocompile v0.14.1/go.mod h1:ppVdAIhbr2H8asPk6k4pY7t9zB1OU5DoEw9xY/FUi1c=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
