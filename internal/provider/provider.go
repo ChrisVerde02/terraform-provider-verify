@@ -35,6 +35,10 @@ type ProviderData struct {
 	// UsersClient is configured for IBM Verify user management (SCIM v2).
 	// Falls back to STSClient if dedicated user credentials are not provided.
 	UsersClient *verifyclient.Client
+
+	// APIClientsClient is configured for IBM Verify Dynamic Client Registration.
+	// Falls back to STSClient if dedicated DCR credentials are not provided.
+	APIClientsClient *verifyclient.Client
 }
 
 // GetSTSClient returns the STS SDK client. May be nil if not configured.
@@ -48,6 +52,9 @@ func (pd *ProviderData) GetAppsClient() *verifyclient.Client { return pd.AppsCli
 
 // GetUsersClient returns the users SDK client. May be nil if not configured.
 func (pd *ProviderData) GetUsersClient() *verifyclient.Client { return pd.UsersClient }
+
+// GetAPIClientsClient returns the API clients SDK client. May be nil if not configured.
+func (pd *ProviderData) GetAPIClientsClient() *verifyclient.Client { return pd.APIClientsClient }
 
 // VerifyProvider defines our Terraform provider.
 type VerifyProvider struct{}
@@ -213,6 +220,11 @@ func (p *VerifyProvider) Configure(
 		pd.UsersClient = pd.STSClient
 	}
 
+	// APIClientsClient reuses STSClient — same verifyclient.Client has .APIClients wired internally.
+	if pd.STSClient != nil {
+		pd.APIClientsClient = pd.STSClient
+	}
+
 	// Make ProviderData available to all resources and data sources.
 	resp.ResourceData = pd
 	resp.DataSourceData = pd
@@ -238,6 +250,7 @@ func (p *VerifyProvider) Resources(
 		resources.NewSignerCertResource,
 		resources.NewApplicationResource,
 		resources.NewUserResource,
+		resources.NewAPIClientResource,
 	}
 }
 
