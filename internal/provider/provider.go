@@ -31,6 +31,10 @@ type ProviderData struct {
 	// IBM Verify application management operations. Falls back to STSClient if
 	// dedicated app credentials are not provided.
 	AppsClient *verifyclient.Client
+
+	// UsersClient is configured for IBM Verify user management (SCIM v2).
+	// Falls back to STSClient if dedicated user credentials are not provided.
+	UsersClient *verifyclient.Client
 }
 
 // GetSTSClient returns the STS SDK client. May be nil if not configured.
@@ -41,6 +45,9 @@ func (pd *ProviderData) GetCertClient() *verifyclient.Client { return pd.CertCli
 
 // GetAppsClient returns the apps SDK client. May be nil if not configured.
 func (pd *ProviderData) GetAppsClient() *verifyclient.Client { return pd.AppsClient }
+
+// GetUsersClient returns the users SDK client. May be nil if not configured.
+func (pd *ProviderData) GetUsersClient() *verifyclient.Client { return pd.UsersClient }
 
 // VerifyProvider defines our Terraform provider.
 type VerifyProvider struct{}
@@ -187,8 +194,7 @@ func (p *VerifyProvider) Configure(
 	}
 
 	// Build the apps client. Prefer dedicated app credentials; fall back to
-	// the STS client if app-specific credentials are not provided (the same
-	// verifyclient.Client already has .Apps wired internally).
+	// the STS client if app-specific credentials are not provided.
 	if appClientID != "" && appClientSecret != "" {
 		c, err := verifyclient.New(tenantURL,
 			verifyclient.WithClientCredentials(appClientID, appClientSecret),
@@ -199,8 +205,12 @@ func (p *VerifyProvider) Configure(
 		}
 		pd.AppsClient = c
 	} else if pd.STSClient != nil {
-		// Reuse the STS client — it has .Apps wired from the same verifyclient.New call.
 		pd.AppsClient = pd.STSClient
+	}
+
+	// UsersClient reuses STSClient — same verifyclient.Client has .Users wired internally.
+	if pd.STSClient != nil {
+		pd.UsersClient = pd.STSClient
 	}
 
 	// Make ProviderData available to all resources and data sources.
@@ -227,6 +237,7 @@ func (p *VerifyProvider) Resources(
 		resources.NewTokenExchangeResource,
 		resources.NewSignerCertResource,
 		resources.NewApplicationResource,
+		resources.NewUserResource,
 	}
 }
 
