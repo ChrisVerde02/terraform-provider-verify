@@ -1,4 +1,4 @@
-# examples3 — New Resources Demo
+# examples3 — New Resources Demo (v0.8.0)
 
 Demonstrates the three new IBM Verify resources added in v0.6.0–v0.8.0:
 
