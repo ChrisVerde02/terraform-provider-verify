@@ -162,8 +162,9 @@ func (r *APIClientResource) apiClientsClientFor(ctx context.Context) (*verifycli
 }
 
 // Create registers a new API client in IBM Verify via DCR.
-// IBM Verify returns 201 + Location header; the SDK follows up with a GET
-// and returns the full record as a raw map.
+// Idempotent: if an API client with the same clientName already exists it is
+// adopted into state without creating a duplicate. Running terraform apply
+// twice, or wiping state and re-applying, is always safe.
 func (r *APIClientResource) Create(
 	ctx context.Context,
 	req resource.CreateRequest,
@@ -181,6 +182,22 @@ func (r *APIClientResource) Create(
 		return
 	}
 
+	// --- Idempotency check ---
+	// List all existing API clients and look for one matching clientName.
+	// If found, adopt it into state instead of creating a duplicate.
+	existingList, listErr := c.APIClients.List(ctx, nil)
+	if listErr == nil {
+		wantName := plan.ClientName.ValueString()
+		for _, client := range existingList {
+			if name, ok := client["clientName"].(string); ok && name == wantName {
+				apiClientStateFromMap(ctx, &plan, client)
+				resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+				return
+			}
+		}
+	}
+
+	// No existing match — create a new API client.
 	var entitlements []string
 	resp.Diagnostics.Append(plan.Entitlements.ElementsAs(ctx, &entitlements, false)...)
 	if resp.Diagnostics.HasError() {
