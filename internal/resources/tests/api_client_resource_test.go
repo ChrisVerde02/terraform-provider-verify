@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	generated "github.com/ChrisVerde02/ibmverify-go/generated"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	resources "github.com/Christian-Verderame/terraform-provider-verify/internal/resources"
 )
 
 const testAPIClientID = "c1b2c3d4-0000-0000-0000-000000000001"
@@ -175,5 +178,55 @@ func TestAPIClientsDelete_404_returnsError(t *testing.T) {
 	err := c.APIClients.Delete(context.Background(), "missing-client")
 	if err == nil {
 		t.Fatal("expected error for HTTP 404, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// apiClientStateFromMap — adoption path: secret not in map → empty string, not unknown
+// ---------------------------------------------------------------------------
+
+func TestAPIClientStateFromMap_adoptionPath_secretIsEmptyNotUnknown(t *testing.T) {
+	// Simulate a GET response (no clientSecret key) — happens during adoption and Read.
+	m := map[string]interface{}{
+		"clientId":     testAPIClientID,
+		"clientName":   "my-tf-client",
+		"enabled":      true,
+		"entitlements": []interface{}{"manageCerts"},
+	}
+
+	state := resources.APIClientStateModel{
+		// ClientSecret starts as unknown (zero value) — same as adoption path.
+		ClientSecret: types.StringUnknown(),
+	}
+	resources.APIClientStateFromMap(context.Background(), &state, m)
+
+	if state.ClientSecret.IsNull() {
+		t.Error("ClientSecret must not be null after adoption — Terraform requires all Computed fields to be known")
+	}
+	if state.ClientSecret.IsUnknown() {
+		t.Error("ClientSecret must not be unknown after adoption — Terraform requires all Computed fields to be known after apply")
+	}
+	// Secret should be empty string (not the real secret, which IBM never returns on GET).
+	if got := state.ClientSecret.ValueString(); got != "" {
+		t.Errorf("ClientSecret: want empty string on adoption, got %q", got)
+	}
+}
+
+func TestAPIClientStateFromMap_adoptionPath_preservesExistingSecret(t *testing.T) {
+	// Simulate Read refreshing state when an existing secret is already stored.
+	m := map[string]interface{}{
+		"clientId":   testAPIClientID,
+		"clientName": "my-tf-client",
+		"enabled":    true,
+	}
+
+	state := resources.APIClientStateModel{
+		// Pre-existing secret from initial Create.
+		ClientSecret: types.StringValue("previously-stored-secret"),
+	}
+	resources.APIClientStateFromMap(context.Background(), &state, m)
+
+	if got := state.ClientSecret.ValueString(); got != "previously-stored-secret" {
+		t.Errorf("ClientSecret: want %q preserved, got %q", "previously-stored-secret", got)
 	}
 }

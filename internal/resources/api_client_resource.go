@@ -190,7 +190,7 @@ func (r *APIClientResource) Create(
 		wantName := plan.ClientName.ValueString()
 		for _, client := range existingList {
 			if name, ok := client["clientName"].(string); ok && name == wantName {
-				apiClientStateFromMap(ctx, &plan, client)
+				APIClientStateFromMap(ctx, &plan, client)
 				resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 				return
 			}
@@ -224,7 +224,7 @@ func (r *APIClientResource) Create(
 		return
 	}
 
-	apiClientStateFromMap(ctx, &plan, m)
+	APIClientStateFromMap(ctx, &plan, m)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -257,7 +257,7 @@ func (r *APIClientResource) Read(
 		return
 	}
 
-	apiClientStateFromMap(ctx, &state, m)
+	APIClientStateFromMap(ctx, &state, m)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -338,21 +338,30 @@ func (r *APIClientResource) ImportState(
 	state := APIClientStateModel{
 		TenantURL: types.StringValue(r.apiClientsClient.TenantURL()),
 	}
-	apiClientStateFromMap(ctx, &state, m)
+	APIClientStateFromMap(ctx, &state, m)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// apiClientStateFromMap fills an APIClientStateModel from a raw DCR response map.
-func apiClientStateFromMap(ctx context.Context, state *APIClientStateModel, m map[string]interface{}) {
+// APIClientStateFromMap fills an APIClientStateModel from a raw DCR response map.
+// client_secret is only present in the Create response; GET responses never include it.
+// When the secret is absent from the map, the existing state value is preserved so that
+// Terraform never sees an unknown/null for a Computed field after apply.
+// Exported for use in tests.
+func APIClientStateFromMap(ctx context.Context, state *APIClientStateModel, m map[string]interface{}) {
 	if id, ok := m["clientId"].(string); ok {
 		state.ClientID = types.StringValue(id)
 	}
 	if name, ok := m["clientName"].(string); ok {
 		state.ClientName = types.StringValue(name)
 	}
-	if secret, ok := m["clientSecret"].(string); ok {
+	if secret, ok := m["clientSecret"].(string); ok && secret != "" {
 		state.ClientSecret = types.StringValue(secret)
+	} else if state.ClientSecret.IsNull() || state.ClientSecret.IsUnknown() {
+		// Secret not returned by IBM Verify (GET path or adoption path).
+		// Store empty string so the field is always known in state.
+		state.ClientSecret = types.StringValue("")
 	}
+	// else: preserve the existing non-empty secret already in state.
 	if desc, ok := m["description"].(string); ok {
 		state.Description = types.StringValue(desc)
 	} else if state.Description.IsNull() || state.Description.IsUnknown() {
