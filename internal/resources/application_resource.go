@@ -147,6 +147,9 @@ func appIDFromHref(href string) string {
 }
 
 // Create registers a new application in IBM Verify.
+// Idempotent: if an application with the same name and templateId already exists
+// it is adopted into state without creating a duplicate. This means running
+// terraform apply twice, or wiping state and re-applying, is always safe.
 func (r *ApplicationResource) Create(
 	ctx context.Context,
 	req resource.CreateRequest,
@@ -164,6 +167,41 @@ func (r *ApplicationResource) Create(
 		return
 	}
 
+	// --- Idempotency check ---
+	// List all existing applications and look for one matching name + templateId.
+	// If found, adopt it into state instead of creating a duplicate.
+	existing, listErr := c.Apps.List(ctx, nil)
+	if listErr == nil {
+		wantName := plan.Name.ValueString()
+		wantTemplate := plan.TemplateID.ValueString()
+		for _, app := range existing {
+			name, _ := app["name"].(string)
+			tmpl, _ := app["templateId"].(string)
+			if name == wantName && tmpl == wantTemplate {
+				// Found a matching application — adopt it.
+				existingID := appIDFromHref(
+					func() string {
+						if links, ok := app["_links"].(map[string]interface{}); ok {
+							if self, ok := links["self"].(map[string]interface{}); ok {
+								if href, ok := self["href"].(string); ok {
+									return href
+								}
+							}
+						}
+						return ""
+					}(),
+				)
+				if existingID != "" {
+					plan.ApplicationID = types.StringValue(existingID)
+					plan.ApplicationState = types.StringValue(fmt.Sprintf("%v", app["applicationState"]))
+					resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+					return
+				}
+			}
+		}
+	}
+
+	// No existing match — create a new application.
 	result, err := c.Apps.Create(ctx, &generated.ApplicationRequestBean{
 		Name:       plan.Name.ValueString(),
 		TemplateID: plan.TemplateID.ValueString(),
@@ -173,8 +211,7 @@ func (r *ApplicationResource) Create(
 		return
 	}
 
-	// IBM Verify returns the application ID as the last path segment of the
-	// self-link href in the response: /v1.0/applications/<uuid>
+	// IBM Verify returns the application ID in the self-link href.
 	if result.GetLinks() == nil || result.GetLinks().GetSelf() == nil {
 		resp.Diagnostics.AddError(
 			"Unexpected response from IBM Verify",
@@ -195,10 +232,9 @@ func (r *ApplicationResource) Create(
 
 	plan.ApplicationID = types.StringValue(appID)
 
-	// Fetch the full application record to populate computed fields.
+	// Fetch the full record to populate computed fields.
 	m, err := c.Apps.Get(ctx, appID)
 	if err != nil {
-		// Application was created — store what we have; next refresh will fill the rest.
 		plan.ApplicationState = types.StringValue("")
 	} else {
 		plan.ApplicationState = types.StringValue(fmt.Sprintf("%v", m["applicationState"]))

@@ -169,6 +169,9 @@ func (r *UserResource) usersClientFor(ctx context.Context) (*verifyclient.Client
 func strPtr(s string) *string { return &s }
 
 // Create creates a new user in IBM Verify via the SCIM v2 API.
+// Idempotent: if a user with the same userName already exists it is adopted
+// into state without creating a duplicate. Running terraform apply twice,
+// or wiping state and re-applying, is always safe.
 func (r *UserResource) Create(
 	ctx context.Context,
 	req resource.CreateRequest,
@@ -186,12 +189,23 @@ func (r *UserResource) Create(
 		return
 	}
 
+	// --- Idempotency check ---
+	// Use SCIM filter to find an existing user with the same userName.
+	// If found, adopt it into state instead of creating a duplicate.
+	filterVal := fmt.Sprintf(`userName eq "%s"`, plan.UserName.ValueString())
+	existing, listErr := c.Users.List(ctx, &generated.GetUsersRequest{Filter: &filterVal})
+	if listErr == nil && len(existing) > 0 {
+		populateStateFromMap(&plan, existing[0])
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
+
+	// No existing match — create the user.
 	userV2 := &generated.UserV2{
 		Schemas:  []string{"urn:ietf:params:scim:schemas:core:2.0:User"},
 		UserName: plan.UserName.ValueString(),
 	}
 
-	// Set optional Name fields.
 	givenName := plan.GivenName.ValueString()
 	familyName := plan.FamilyName.ValueString()
 	if givenName != "" || familyName != "" {
@@ -204,19 +218,16 @@ func (r *UserResource) Create(
 		}
 	}
 
-	// Set optional email.
 	if email := plan.Email.ValueString(); email != "" {
 		userV2.Emails = []*generated.EmailAddress{
 			{Value: email, Type: "work"},
 		}
 	}
 
-	// Set optional password.
 	if pw := plan.Password.ValueString(); pw != "" {
 		userV2.Password = strPtr(pw)
 	}
 
-	// Set active flag if explicitly provided.
 	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
 		active := plan.Active.ValueBool()
 		userV2.Active = &active
