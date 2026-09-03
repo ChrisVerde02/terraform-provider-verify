@@ -164,8 +164,8 @@ terraform-provider-verify/
 │   ├── jwt/             # Wraps verify_jwt
 │   ├── token_exchange/  # Wraps verify_token_exchange
 │   └── introspection/   # Wraps data.verify_token_introspection
-├── examples2/           # JWT token-exchange workflow demo (git-ignored)
-└── examples3/           # New resources demo: application, user, api_client (git-ignored)
+├── examples2/           # JWT token-exchange workflow demo (main.tf visible; tfvars & state git-ignored)
+└── examples3/           # New resources demo: application, user, api_client (main.tf + README.md visible; tfvars & state git-ignored)
 ```
 
 ## Quick start — JWT token-exchange workflow
